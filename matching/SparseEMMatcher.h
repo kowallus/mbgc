@@ -19,16 +19,18 @@ typedef std::vector<SequenceItem> SequenceVector;
 template<class MyUINT1, class MyUINT2>
 using HashBuffer =  std::pair<MyUINT1*, MyUINT2* >;
 
-class CopMEMMatcher: public TextMatcher {
+class SparseEMMatcher: public TextMatcher {
 private:
-    const char* start1;
-    size_t N;
+    string src;
+    const size_t maxSrcLength;
+    const size_t SRC_SHIFT = 1;
+    size_t processedSrc = SRC_SHIFT;
     int bigRef;
     const int L;
     int K, k1, k2;
     std::uint32_t(*hashFunc32)(const char*);
     std::uint32_t(*hashFuncMatrix[64][6])(const char*);
-    const int H = 3;
+    const int H = 1;
     std::uint32_t hash_size;
     std::uint32_t hash_size_minus_one;
 
@@ -39,7 +41,7 @@ private:
     bool collisionSupport;
 
     void initHashFuncMatrix();
-    void initParams(uint32_t minMatchLength);
+    void initParams(uint32_t minMatchLength, int _k1 = -1, int _k2 = -1);
     void calcCoprimes();
     void displayParams();
 
@@ -59,13 +61,13 @@ private:
     std::pair<std::uint32_t*, std::uint32_t*> buffer0;
 
     template<typename MyUINT1, typename MyUINT2>
-    HashBuffer<MyUINT1, MyUINT2> processRef();
+    void processRef(HashBuffer<MyUINT1, MyUINT2>& buffer);
 
     template<typename MyUINT1, typename MyUINT2>
-    HashBuffer<MyUINT1, MyUINT2> processRefMultithreaded();
+    void processRefMultithreaded(HashBuffer<MyUINT1, MyUINT2>& buffer);
 
     template<typename MyUINT1, typename MyUINT2>
-    HashBuffer<MyUINT1, MyUINT2> processIgnoreCollisionsRef();
+    void processIgnoreCollisionsRef(HashBuffer<MyUINT1, MyUINT2>& buffer);
 
     template <class MyUINT1, class MyUINT2>
     void deleteHashBuffer(HashBuffer<MyUINT1, MyUINT2> & buf);
@@ -86,19 +88,20 @@ private:
                                  uint64_t& betterMatchCount, uint64_t& falseMatchCount);
 
 public:
-    CopMEMMatcher(const char *srcText, const size_t srcLength, const uint32_t targetMatchLength,
-            bool collisionSupport = true, uint32_t minMatchLength = UINT32_MAX);
+    SparseEMMatcher(const size_t srcLengthLimit, const uint32_t targetMatchLength,
+                    bool collisionSupport = true, int _k1 = -1, int _k2 = -1, uint32_t minMatchLength = UINT32_MAX);
 
-    virtual ~CopMEMMatcher();
+    void loadSrc(const char *srcText, size_t srcLength);
+
+    size_t getSrcLength() { return src.size(); };
+
+    virtual ~SparseEMMatcher();
 
     void matchTexts(vector<TextMatch> &resMatches, const string &destText, bool destIsSrc, bool revComplMatching,
                     uint32_t minMatchLength) override;
 
     void matchTexts(vector<TextMatch> &resMatches, const char* destText, size_t destLen, bool destIsSrc,
             bool revComplMatching, uint32_t minMatchLength) override;
-
-    uint64_t approxMatchPattern(const char *pattern, const uint16_t length, uint8_t maxMismatches, uint8_t minMismatches,
-            uint8_t &mismatchesCount, uint64_t& multiMatchCount, uint64_t& falseMatchCount);
 
 };
 

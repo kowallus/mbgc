@@ -145,6 +145,8 @@ namespace PgHelpers {
 
     extern std::ostream *logout;
 
+    void createFolders(string pathToFile);
+
     void* readArray(std::istream&, size_t arraySizeInBytes);
     void readArray(std::istream&, void* destArray, size_t arraySizeInBytes);
     void writeArray(std::ostream&, void* srcArray, size_t arraySize, bool verbose = false);
@@ -187,6 +189,7 @@ namespace PgHelpers {
     }
 
     void writeUIntByteFrugal(std::ostream &dest, uint64_t value);
+    void writeUIntWordFrugal(std::ostream &dest, uint64_t value);
 
     template<typename t_val>
     void readUIntByteFrugal(std::istream &src, t_val& value) {
@@ -198,6 +201,18 @@ namespace PgHelpers {
             value += base * (yByte % 128);
             base *= 128;
         } while (yByte >= 128);
+    }
+
+    template<typename t_val>
+    void readUIntWordFrugal(std::istream &src, t_val& value) {
+        value = 0;
+        uint16_t yWord = 0;
+        t_val base = 1;
+        do {
+            src.read((char *) &yWord, sizeof(uint16_t));
+            value += base * (yWord % 32768);
+            base *= 32768;
+        } while (yWord >= 32768);
     }
 
     extern bool bytePerReadLengthMode;

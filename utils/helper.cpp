@@ -1,6 +1,8 @@
 #include "helper.h"
 
 #include "byteswap.h"
+#include <sys/stat.h>
+
 
 std::ostream *PgHelpers::logout = &std::cout;
 
@@ -44,8 +46,12 @@ unsigned long long int PgHelpers::time_millis() {
     return time_millis(chronocheckpoint);
 }
 
-
-
+void PgHelpers::createFolders(string pathToFile) {
+    size_t pos = 0;
+    while ((pos = pathToFile.find('/', pos)) != std::string::npos) {
+        mkdir(pathToFile.substr(0, pos++).c_str(), 0777);
+    }
+}
 
 const size_t chunkSize = 10000000;
 
@@ -182,6 +188,16 @@ void PgHelpers::writeUIntByteFrugal(std::ostream &dest, uint64_t value) {
     }
     uint8_t yByte = value;
     dest.write((char *) &yByte, sizeof(uint8_t));
+}
+
+void PgHelpers::writeUIntWordFrugal(std::ostream &dest, uint64_t value) {
+    while (value >= 32768) {
+        uint16_t yWord = 32768 + (value % 32768);
+        dest.write((char *) &yWord, sizeof(uint16_t));
+        value = value / 32768;
+    }
+    uint16_t yWord = value;
+    dest.write((char *) &yWord, sizeof(uint16_t));
 }
 
 bool PgHelpers::bytePerReadLengthMode = false;
