@@ -127,9 +127,11 @@ void MBGC_Encoder::loadRef(string& refName) {
     size_t refLengthLimit = params->referenceFactor * refStr.size();
     if (refLengthLimit > UINT32_MAX)
         refLengthLimit = UINT32_MAX;
-    matcher = new SparseEMMatcher(refLengthLimit, params->k, false, params->k1, params->k2);
-    matcher->loadSrc(refStr.data(), refStr.size());
-    *PgHelpers::logout << "initial sparseEM reference length: " << matcher->getSrcLength() << endl;
+    matcher = new SlidingWindowSparseEMMatcher(refLengthLimit, params->k, params->k1, params->k2,
+                                               params->skipMargin);
+    matcher->setSlidingWindowSize(params->referenceSlidingWindowFactor);
+    matcher->loadRef(refStr.data(), refStr.size());
+    *PgHelpers::logout << "initial sparseEM reference length: " << matcher->getRefLength() << endl;
     currentRefExtGoal = rcStart * MBGC_Params::INITIAL_REF_EXT_GOAL_FACTOR;
     refExtLengthPerFile = (refLengthLimit - refStr.size() - currentRefExtGoal) /
             filesCount > MBGC_Params::FINAL_REF_EXT_END_MARGIN_FILES?
@@ -272,11 +274,14 @@ void MBGC_Encoder::encodeTargetsWithParallelIO() {
 #ifdef DEVELOPER_BUILD
     targetRefExtension.reserve(rcStart / 16);
 #endif
-#pragma omp parallel for ordered schedule(static, 1) private(fp, seq)
+    int threadsLimit = PgHelpers::numberOfThreads < MBGC_Params::PARALLELIO_MODE_THREADS_LIMIT ?
+            PgHelpers::numberOfThreads : MBGC_Params::PARALLELIO_MODE_THREADS_LIMIT;
+#pragma omp parallel for ordered schedule(static, 1) private(fp, seq) num_threads(threadsLimit)
     for(int i = 0; i < targetsCount; i++) {
         int seqCounter = 0;
         fp = gzopen(fileNames[i + 1].c_str(), "r");
         seq = kseq_init(fp);
+        size_t matchingLockPos = matcher->acquireWorkerMatchingLockPos();
 #pragma omp ordered
         {
             unmatchedFractionFactors.push_back(params->currentUnmatchedFractionFactor);
@@ -299,17 +304,17 @@ void MBGC_Encoder::encodeTargetsWithParallelIO() {
                     if (params->isContigProperForRefExtension(bSize, currentUnmatched,
                                                               params->currentUnmatchedFractionFactor)) {
                         largestRefContigSize = bSize > largestRefContigSize ? bSize : largestRefContigSize;
-                        matcher->loadSrc(seqPtr, bSize);
+                        matcher->loadRef(seqPtr, bSize);
                         currentRefExtGoal -= bSize;
                         if (!params->dontUseRCinReference()) {
                             PgHelpers::reverseComplementInPlace(seqPtr, bSize);
-                            matcher->loadSrc(seqPtr, bSize);
+                            matcher->loadRef(seqPtr, bSize);
                             currentRefExtGoal -= bSize;
                         }
                     } else if (params->useLiteralsinReference()) {
                         largestRefContigSize = targetRefExtension.size() > largestRefContigSize ?
                                                targetRefExtension.size() : largestRefContigSize;
-                        matcher->loadSrc(targetRefExtension.data(), targetRefExtension.size());
+                        matcher->loadRef(targetRefExtension.data(), targetRefExtension.size());
                         currentRefExtGoal -= bSize;
                         targetRefExtension.clear();
                     }
@@ -326,11 +331,13 @@ void MBGC_Encoder::encodeTargetsWithParallelIO() {
             else
                 params->tightenUnmatchedFractionFactor();
         }
+        matcher->releaseWorkerMatchingLockPos(matchingLockPos);
+        locksPosStream.append((char*) &matchingLockPos, sizeof(matchingLockPos));
         kseq_destroy(seq);
         gzclose(fp);
     }
-    mapOff = mapOffDest.str();
-    mapLen = mapLenDest.str();
+    mapOffStream = mapOffDest.str();
+    mapLenStream = mapLenDest.str();
 }
 
 vector<gzFile> fps;
@@ -344,6 +351,7 @@ void MBGC_Encoder::initParallelEncoding() {
     targetMapOffDests.resize(targetsCount);
     targetMapLenDests.resize(targetsCount);
     targetSeqsCounts.resize(targetsCount, 0);
+    matchingLocksPos.resize(targetsCount);
     fps.resize(targetsCount);
     processedTargetsCount = 0;
 }
@@ -356,7 +364,7 @@ void MBGC_Encoder::finalizeRefExtensionsOfTarget(int i) {
         int e = processedTargetsCount;
         processedTargetsCount = targetsCount;
         while (e < targetsCount && fileNames[e + 1].empty()) {
-            matcher->loadSrc(targetRefExtensions[e].data(),
+            matcher->loadRef(targetRefExtensions[e].data(),
                              targetRefExtensions[e].size());
             currentRefExtGoal -= targetRefExtensions[e].size();
             currentRefExtGoal += refExtLengthPerFile;
@@ -365,6 +373,7 @@ void MBGC_Encoder::finalizeRefExtensionsOfTarget(int i) {
             else
                 params->tightenUnmatchedFractionFactor();
             targetRefExtensions[e].clear();
+            matcher->releaseWorkerMatchingLockPos(matchingLocksPos[e]);
             targetRefExtensions[e++].shrink_to_fit();
         }
         processedTargetsCount = e;
@@ -375,8 +384,9 @@ void MBGC_Encoder::finalizeParallelEncoding() {
     for(int i = 0; i < targetsCount; i++) {
         PgHelpers::writeValue<uint32_t>(seqsCountDest, targetSeqsCounts[i]);
         literalStr.append(targetLiterals[i]);
-        mapOff.append(targetMapOffDests[i].str());
-        mapLen.append(targetMapLenDests[i].str());
+        mapOffStream.append(targetMapOffDests[i].str());
+        mapLenStream.append(targetMapLenDests[i].str());
+        locksPosStream.append((char*) &matchingLocksPos[i], sizeof(matchingLocksPos[i]));
     }
 }
 
@@ -392,6 +402,7 @@ inline void MBGC_Encoder::encodeTargetSequence(int i) {
     kseq_t* seq = kseq_init(fp);
     uint8_t unmatchedFractionFactor = params->currentUnmatchedFractionFactor;
     unmatchedFractionFactors[i] = unmatchedFractionFactor;
+    matchingLocksPos[i] = matcher->acquireWorkerMatchingLockPos();
     while ((l = kseq_read(seq)) >= 0) {
         largestContigSize = seq->seq.l > largestContigSize ? seq->seq.l : largestContigSize;
         string header = readHeader(seq);
@@ -402,7 +413,7 @@ inline void MBGC_Encoder::encodeTargetSequence(int i) {
         size_t bSize = params->splitContigsIntoBlocks() ? params->SEQ_BLOCK_SIZE : seqLeft ;
         while (seqLeft > 0) {
             bSize = seqLeft < bSize ? seqLeft : bSize;
-            matcher->matchTexts(resMatches, seqPtr, bSize, false, false, params->k);
+            matcher->matchTexts(resMatches, seqPtr, bSize, false, false, params->k, matchingLocksPos[i]);
             resCount += resMatches.size();
             size_t currentUnmatched = processMatches(resMatches, seqPtr, bSize,
                                                      targetLiterals[i], targetMapOffDests[i], targetMapLenDests[i],
@@ -444,7 +455,7 @@ inline int MBGC_Encoder::finalizeParallelEncodingOfTarget() {
         int e = processedTargetsCount;
         processedTargetsCount = targetsCount + 1;
         while (e < targetsCount && fileNames[e + 1].empty()) {
-            matcher->loadSrc(targetRefExtensions[e].data(),
+            matcher->loadRef(targetRefExtensions[e].data(),
                              targetRefExtensions[e].size());
             currentRefExtGoal -= targetRefExtensions[e].size();
             currentRefExtGoal += refExtLengthPerFile;
@@ -456,11 +467,13 @@ inline int MBGC_Encoder::finalizeParallelEncodingOfTarget() {
             targetRefExtensions[e].shrink_to_fit();
             PgHelpers::writeValue<uint32_t>(seqsCountDest, targetSeqsCounts[e]);
             literalStr.append(targetLiterals[e]);
-            mapOff.append(targetMapOffDests[e].str());
-            mapLen.append(targetMapLenDests[e].str());
+            mapOffStream.append(targetMapOffDests[e].str());
+            mapLenStream.append(targetMapLenDests[e].str());
+            locksPosStream.append((char*) &matchingLocksPos[e], sizeof(matchingLocksPos[e]));
             targetLiterals[e].clear(); targetLiterals[e].shrink_to_fit();
             targetMapOffDests[e].str(""); targetMapOffDests[e].clear();
             targetMapLenDests[e].str(""); targetMapLenDests[e].clear();
+            matcher->releaseWorkerMatchingLockPos(matchingLocksPos[e]);
             e++; counter++;
         }
         processedTargetsCount = e;
@@ -613,15 +626,17 @@ size_t MBGC_Encoder::prepareAndCompressStreams() {
     int seqBlocksCount = params->coderLevel >= CODER_LEVEL_MAX? 1 : 2;
     ParallelBlocksCoderProps blockSeqCoderProps(seqBlocksCount, seqCoderProps.get());
     cJobs.push_back(CompressionJob("reference and literals stream... ", literalStr, &blockSeqCoderProps));
+    auto refLocksCoderProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX, 4);
+    cJobs.push_back(CompressionJob("reference loading locks position stream... ", locksPosStream, refLocksCoderProps.get()));
     auto nMapOffCoderProps = getDefaultCoderProps(LZMA_CODER, params->coderLevel, LZMA_DATAPERIODCODE_32_t);
     int mapOffBlocksCount = (params->coderLevel >= CODER_LEVEL_MAX? 1 : (params->coderLevel == CODER_LEVEL_NORMAL? 2 : 4));
     ParallelBlocksCoderProps blockNMapOffCoderProps(mapOffBlocksCount, nMapOffCoderProps.get());
-    cJobs.push_back(CompressionJob("matches offsets stream... ", mapOff, &blockNMapOffCoderProps));
+    cJobs.push_back(CompressionJob("matches offsets stream... ", mapOffStream, &blockNMapOffCoderProps));
     auto nMapLenCoderProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX,
                                                   params->coderLevel == CODER_LEVEL_FAST? 3 : 6);
     int mapLenBlocksCount = (params->coderLevel >= CODER_LEVEL_MAX? 1 : (params->coderLevel == CODER_LEVEL_NORMAL? 3 : 4));
     ParallelBlocksCoderProps blockNMapLenCoderProps(mapLenBlocksCount, nMapLenCoderProps.get());
-    cJobs.push_back(CompressionJob("matches lengths stream... ", mapLen, &blockNMapLenCoderProps));
+    cJobs.push_back(CompressionJob("matches lengths stream... ", mapLenStream, &blockNMapLenCoderProps));
     CompressionJob::writeCompressedCollectiveParallel(fout, cJobs);
     size_t outSize = fout.tellp();
     fout.close();
@@ -647,6 +662,7 @@ void MBGC_Encoder::writeParamsAndStats(fstream &out) const {
     out.put(params->k);
     PgHelpers::writeValue(out, params->k1, false);
     PgHelpers::writeValue(out, params->k2, false);
+    PgHelpers::writeValue(out, params->skipMargin, false);
     PgHelpers::writeValue(out, params->referenceFactor, false);
     out.put(params->refExtensionStrategy);
     if (params->useLiteralsinReference())
@@ -693,9 +709,11 @@ void MBGC_Encoder::encode() {
                            taskRefExtensionsStats << " (check: " << (masterRefExtensionsStats + taskRefExtensionsStats) << ")" << endl;
     }
 
-    refTotalLength = matcher->getSrcLength();
+    refTotalLength = matcher->getRefLength();
+    size_t loadedRefTotalLength = matcher->getLoadedRefLength();
     delete(matcher);
     *PgHelpers::logout << "sparseEM reference length: " << refTotalLength << endl;
+    *PgHelpers::logout << "loaded reference total length: " << loadedRefTotalLength << endl;
     *PgHelpers::logout << "largest reference contig length: " << largestRefContigSize << endl;
     *PgHelpers::logout << "largest contig length: " << largestContigSize << endl;
     *PgHelpers::logout << "targets dna total length: " << totalDestLenAll << endl;

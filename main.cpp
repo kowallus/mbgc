@@ -10,7 +10,7 @@
 
 #include <omp.h>
 
-#define RELEASE_DATE "2020-11-20"
+#define RELEASE_DATE "2021-07-15"
 
 using namespace std;
 
@@ -30,9 +30,9 @@ int main(int argc, char *argv[]) {
 #endif
 
 #ifdef DEVELOPER_BUILD
-    while ((opt = getopt(argc, argv, "c:t:k:s:o:u:pmdbvRLCBUFD?")) != -1) {
+    while ((opt = getopt(argc, argv, "c:t:f:k:s:m:o:u:w:pdbvRLCBUIFD?")) != -1) {
 #else
-    while ((opt = getopt(argc, argv, "c:t:k:s:o:u:pmdb?")) != -1) {
+    while ((opt = getopt(argc, argv, "c:t:f:k:s:m:o:u:w:pdb?")) != -1) {
 #endif
         switch (opt) {
             case 'c':
@@ -42,8 +42,12 @@ int main(int argc, char *argv[]) {
             case 'd':
                 decompressMode = true;
                 break;
+            case 'f':
+                params.setFilterPattern(string(optarg));
+                break;
             case 't':
                 PgHelpers::numberOfThreads = atoi(optarg);
+                params.noOfThreadsFixed = true;
                 break;
             case 'k':
                 compressionParamPresent = true;
@@ -52,6 +56,10 @@ int main(int argc, char *argv[]) {
             case 's':
                 compressionParamPresent = true;
                 params.setReferenceSamplingStep(atoi(optarg));
+                break;
+            case 'm':
+                compressionParamPresent = true;
+                params.setSkipMargin(atoi(optarg));
                 break;
             case 'o':
                 compressionParamPresent = true;
@@ -69,9 +77,9 @@ int main(int argc, char *argv[]) {
                 compressionParamPresent = true;
                 params.setUnmatchedFractionFactor(atoi(optarg));
                 break;
-            case 'm':
+            case 'w':
                 compressionParamPresent = true;
-                params.setMixedCollectionMode();
+                params.setReferenceSlidingWindowFactor(atoi(optarg));
                 break;
 #ifdef DEVELOPER_BUILD
             case 'R':
@@ -94,6 +102,10 @@ int main(int argc, char *argv[]) {
                 compressionParamPresent = true;
                 params.refExtensionStrategy |= MBGC_Params::DYNAMIC_REF_EXT_FACTOR_MASK;
                 break;
+            case 'I':
+                compressionParamPresent = true;
+                params.setInterleaveFileOrder();
+                break;
             case 'F':
                 params.disableDNAformatting = true;
                 break;
@@ -106,23 +118,26 @@ int main(int argc, char *argv[]) {
 #endif
             case '?':
             default: /* '?' */
-                fprintf(stderr, "MBGC %d.%d: Copyright (c) 2020 Szymon Grabowski, Tomasz Kowalski : %s\n\n",
+                fprintf(stderr, "MBGC %d.%d: Copyright (c) 2021 Szymon Grabowski, Tomasz Kowalski : %s\n\n",
                         (int) MBGC_Params::MBGC_VERSION_MAJOR, (int) MBGC_Params::MBGC_VERSION_MINOR, RELEASE_DATE);
-                fprintf(stderr, "Usage for compression: %s [-t noOfThreads] [-m] "
+                fprintf(stderr, "Usage for compression: %s [-t noOfThreads] "
                                 "<sequencesListFile> <archiveFile>\n\n", argv[0]);
-                fprintf(stderr, "Usage for decompression: %s -d [-t noOfThreads] <archiveFile> [<outputPath>]\n\n",
+                fprintf(stderr, "Usage for decompression: %s -d [-t noOfThreads] [-f pattern] "
+                                "<archiveFile> [<outputPath>]\n\n",
                         argv[0]);
 
                 fprintf(stderr, "-t number of threads used (%d - default)\n", MBGC_Params::DEFAULT_NO_OF_THREADS);
-                fprintf(stderr, "-m compression of mixed species collection\n\n");
-                fprintf(stderr, "-d decompression mode\n\n");
+                fprintf(stderr, "-d decompression mode\n"
+                                "-f decompress files with names containing the given pattern\n\n");
 
                 fprintf(stderr, "------------------ EXPERT OPTIONS ----------------\n");
                 fprintf(stderr, "[-k matchingKmerLength] (24 <= k <= 40, 32 - default)\n"
                                 "[-s referenceSamplingStep] (s > 0, 16 - default)\n"
+                                "[-m skipMargin] (0 <= m <= 255, 16 - default)\n"
                                 "[-o referenceFactorBinaryOrder] (0 <= o <= 12, adjusted by default)\n"
                                 "[-c compression level] (1 - fast; 2 - default; 3 - max)\n"
                                 "[-u unmatchedFractionFactor] (1 <= u <= 255, 192 - default)\n"
+                                "[-w referenceSlidingWindowFactor] (2 <= w <= 255, 16 - default)\n"
                                 "[-b] brute parallel encoding mode\n"
                                 "[-p] disable matching parallelization (only I/O and backend compression)\n\n");
 #ifdef DEVELOPER_BUILD
@@ -132,6 +147,7 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "[-C] combined ref extension strategy\n");
                 fprintf(stderr, "[-B] split contigs into blocks (experimental - only for encoding)\n");
                 fprintf(stderr, "[-U] dynamic unmatched fraction ref extension strategy\n");
+                fprintf(stderr, "[-I] interleave order of files \n\n");
                 fprintf(stderr, "[-F] do not format decompressed DNA (i.e., 80 bases per row limit)\n");
                 fprintf(stderr, "[-v] validation mode (disables decompression)\n");
                 fprintf(stderr, "[-D] dump streams to files during decompression\n\n");
@@ -154,6 +170,11 @@ int main(int argc, char *argv[]) {
     }
     if (decompressMode && compressionParamPresent) {
         fprintf(stderr, "Cannot use compression options in decompression mode.\n");
+        fprintf(stderr, "try '%s -?' for more information\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    if (!params.filterPattern.empty() && compressionParamPresent) {
+        fprintf(stderr, "Cannot use file filter pattern in compression mode.\n");
         fprintf(stderr, "try '%s -?' for more information\n", argv[0]);
         exit(EXIT_FAILURE);
     }

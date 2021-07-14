@@ -10,13 +10,16 @@ class MBGC_Params {
 public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 1;
-    static const char MBGC_VERSION_MINOR = 0;
-    static const char MBGC_VERSION_REVISION = 2;
+    static const char MBGC_VERSION_MINOR = 1;
+    static const char MBGC_VERSION_REVISION = 1;
 
     static constexpr char *const MBGC_HEADER = (char*) "MBGC";
     static constexpr char *const TEMPORARY_FILE_SUFFIX = (char*) ".temp";
 
+    static const int FAST_MODE_NO_OF_THREADS = 12;
     static const int DEFAULT_NO_OF_THREADS = 8;
+    static const int PARALLELIO_MODE_THREADS_LIMIT = 3;
+    bool noOfThreadsFixed = false;
 
     // MATCHING PARAMS
 
@@ -30,7 +33,12 @@ public:
     static const int DEFAULT_KMER_LENGTH = 32;
 
     static const int DEFAULT_MODE_REF_SAMPLING = 16;
-    static const int MAX_MODE_REF_SAMPLING = 7;
+    static const int ALT_REF_SAMPLING = 7;
+
+    static const int DEFAULT_SKIP_MARGIN = 16;
+    static const int MAX_MODE_SKIP_MARGIN = 24;
+
+    static const int DEFAULT_REFERENCE_SLIDING_WINDOW_FACTOR = 16;
 
     static const int INITIAL_REF_EXT_GOAL_FACTOR = 8;
     static const int FINAL_REF_EXT_END_MARGIN_FILES = 16;
@@ -117,13 +125,17 @@ public:
     int k1 = DEFAULT_MODE_REF_SAMPLING;
     bool referenceSamplingStepFixed = false;
     int k2 = 1;
+    uint8_t skipMargin = DEFAULT_SKIP_MARGIN;
+    bool skipMarginFixed = false;
     int referenceFactor = ADJUSTED_REFERENCE_FACTOR_FLAG;
+    int referenceSlidingWindowFactor = DEFAULT_REFERENCE_SLIDING_WINDOW_FACTOR;
 
     uint8_t coderLevel = CODER_LEVEL_NORMAL;
 
     string seqListFileName;
     string archiveFileName;
     string outputPath;
+    string filterPattern;
 
     bool sequentialMatching = false;
     bool interleaveFileOrder = false;
@@ -145,7 +157,7 @@ public:
         referenceFactor = BOOSTED_ADJUSTED_REFERENCE_FACTOR_FLAG;
     }
 
-    void setMixedCollectionMode() {
+    void setInterleaveFileOrder() {
         interleaveFileOrder = true;
     }
 
@@ -166,6 +178,15 @@ public:
         referenceSamplingStepFixed = true;
     }
 
+    void setSkipMargin(int skipMargin) {
+        if (skipMargin < 0 || skipMargin > UINT8_MAX) {
+            fprintf(stderr, "m - skip margin - should be an integer between 0 and 255.\n\n");
+            exit(EXIT_FAILURE);
+        }
+        MBGC_Params::skipMargin = skipMargin;
+        skipMarginFixed = true;
+    }
+
     void setReferenceFactorBinaryOrder(int o) {
         if (o < 0 || o > 12) {
             fprintf(stderr, "o - reference factor binary order - should be an integer between 0 and 12.\n\n");
@@ -183,6 +204,14 @@ public:
         MBGC_Params::currentUnmatchedFractionFactor = u;
     }
 
+    void setReferenceSlidingWindowFactor(int w) {
+        if (w < 2 || w > 255) {
+            fprintf(stderr, "w - reference sliding window factor - should be an integer between 1 and 255.\n\n");
+            exit(EXIT_FAILURE);
+        }
+        MBGC_Params::referenceSlidingWindowFactor = w;
+    }
+
     void setArchiveFileName(const string &archiveFileName) {
         MBGC_Params::archiveFileName = archiveFileName;
     }
@@ -195,6 +224,10 @@ public:
         if (outputPath.size() && outputPath.back() != '/')
             outputPath.push_back('/');
         MBGC_Params::outputPath = outputPath;
+    }
+
+    void setFilterPattern(string filterPattern) {
+        MBGC_Params::filterPattern = filterPattern;
     }
 
     void setSequentialMatchingMode() {
@@ -215,8 +248,13 @@ public:
         if (coderLevel == CODER_LEVEL_MAX) {
             setSequentialMatchingMode();
             setBoostedReferenceFactorFlag();
-            if (!referenceSamplingStepFixed) {
-                MBGC_Params::k1 = MAX_MODE_REF_SAMPLING;
+            if (!skipMarginFixed) {
+                MBGC_Params::skipMargin = MAX_MODE_SKIP_MARGIN;
+            }
+        }
+        if (coderLevel == CODER_LEVEL_FAST) {
+            if (!noOfThreadsFixed) {
+                PgHelpers::numberOfThreads = FAST_MODE_NO_OF_THREADS;
             }
         }
     }

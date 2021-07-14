@@ -7,6 +7,7 @@
 #include "../utils/helper.h"
 #include "MBGC_Params.h"
 #include <vector>
+#include <atomic>
 
 class MBGC_Decoder {
 private:
@@ -19,6 +20,7 @@ private:
     char mbgcVersionRevision;
 
     string refStr;
+    size_t refPos = 0;
     int rcStart;
 
     uint32_t refTotalLength;
@@ -39,14 +41,15 @@ private:
 
     int fileIdx = 0;
 
-    istringstream mapOffSrc, mapLenSrc, seqsCountSrc;
+    istringstream mapOffSrc, mapLenSrc, seqsCountSrc, matchingLocksPosSrc;
 
     void writeDNA(const char *sequence, int64_t length);
     void decodeHeader(string& headerTemplate);
-    bool moveToFile(const string& filepath, string& src);
+    bool moveToFile(const string& filepath, string& src, const int thread_no);
     void decodeReference(const string &name);
     uint32_t decodeSequenceAndReturnUnmatchedChars(string &dest);
     void decodeFile(uint8_t unmatchedFractionFactor);
+    void loadRef(const char *seqText, size_t seqLength, size_t i1);
     void extractFiles();
 
     void writeFilesParallelTask(const int thread_no);
@@ -55,9 +58,11 @@ private:
     vector<vector<string>> contentsBuf;
     vector<vector<string>> namesBuf;
     vector<uint8_t> in, out;
+    vector<uint32_t> extractedFilesCount;
     bool isDecoding;
 
     void readParamsAndStats(fstream &fin);
+
 
 public:
 

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.6)
+cmake_minimum_required(VERSION 3.4)
 project(mbgc)
 
 set(CMAKE_CXX_STANDARD 14)
@@ -38,7 +38,7 @@ set(MATCHER_FILES
         ${HELPER_FILES}
         ${HASHES_FILES}
         matching/TextMatchers.cpp matching/TextMatchers.h
-        matching/SparseEMMatcher.cpp matching/SparseEMMatcher.h)
+        matching/SlidingWindowSparseEMMatcher.cpp matching/SlidingWindowSparseEMMatcher.h)
 
 set(MBGC_FILES
         ${MATCHER_FILES}

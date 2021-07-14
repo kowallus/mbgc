@@ -4,6 +4,7 @@
 #include "../libs/asmlib.h"
 
 #include <omp.h>
+#include <numeric>
 
 #ifdef DEVELOPER_BUILD
 #include "../utils/libdeflate_wrapper.h"
@@ -60,7 +61,12 @@ void MBGC_Decoder::decodeHeader(string& headerTemplate) {
     A_append(outBuffer, headerTemplate, tPos, headerTemplate.size() - tPos);
 }
 
-bool MBGC_Decoder::moveToFile(const string& filepath, string& src) {
+bool MBGC_Decoder::moveToFile(const string& filename, string& src, const int thread_no) {
+    if (filename.find(params->filterPattern) == string::npos) {
+        src.clear();
+        return true;
+    }
+    string filepath = params->outputPath + filename;
 #ifdef DEVELOPER_BUILD
     if (params->validationMode) {
         string tmpfile = filepath;
@@ -99,6 +105,7 @@ bool MBGC_Decoder::moveToFile(const string& filepath, string& src) {
         return false;
     PgHelpers::writeArray(fstr, (void *) src.data(), src.size());
     fstr.close();
+    extractedFilesCount[thread_no]++;
     src.clear();
     return true;
 }
@@ -106,7 +113,7 @@ bool MBGC_Decoder::moveToFile(const string& filepath, string& src) {
 void MBGC_Decoder::decodeReference(const string &name) {
     size_t tmp;
     rcStart = 0;
-    refStr.push_back(0);
+    refStr[refPos++] = 0;
     size_t hTemplateEnd = headersTemplates.find(MBGC_Params::FILE_SEPARATOR_MARK, hTemplatesPos);
     string headerTemplate(headersTemplates, hTemplatesPos, hTemplateEnd - hTemplatesPos);
     uint32_t seqCount;
@@ -117,13 +124,14 @@ void MBGC_Decoder::decodeReference(const string &name) {
         outBuffer.push_back('\n');
         tmp = literalStr.find(MBGC_Params::SEQ_SEPARATOR_MARK, literalPos);
         writeDNA(literalStr.data() + literalPos, tmp - literalPos);
-        A_append(refStr, literalStr, literalPos, tmp - literalPos);
+        A_memcpy((char *) refStr.data() + refPos, literalStr.data() + literalPos, tmp - literalPos);
+        refPos += tmp - literalPos;
         rcStart += tmp - literalPos;
         literalPos = tmp + 1;
     }
     headersPos++;
     hTemplatesPos = hTemplateEnd + 1;
-    bool ok = moveToFile(params->outputPath + name, outBuffer);
+    bool ok = moveToFile(name, outBuffer, 0);
 #ifdef DEVELOPER_BUILD
     if (ok)
         params->validFilesCount++;
@@ -131,9 +139,9 @@ void MBGC_Decoder::decodeReference(const string &name) {
         params->invalidFilesCount++;
 #endif
     if (!params->dontUseRCinReference()) {
-        refStr.resize(rcStart * 2 + 1);
         char *refPtr = (char *) refStr.data() + 1;
         PgHelpers::reverseComplement(refPtr, rcStart, refPtr + rcStart);
+        refPos += rcStart;
     }
 }
 
@@ -172,6 +180,9 @@ void MBGC_Decoder::decodeFile(uint8_t unmatchedFractionFactor) {
     string headerTemplate(headersTemplates, hTemplatesPos, hTemplateEnd - hTemplatesPos);
     uint32_t seqCount;
     PgHelpers::readValue<uint32_t>(seqsCountSrc, seqCount, false);
+    size_t refLockPos = this->refTotalLength;
+    if (matchingLocksPosSrc.rdbuf()->in_avail())
+        PgHelpers::readValue<size_t>(matchingLocksPosSrc, refLockPos, false);
     for (uint32_t i = 0; i < seqCount; i++) {
         outBuffer.push_back('>');
         decodeHeader(headerTemplate);
@@ -179,14 +190,10 @@ void MBGC_Decoder::decodeFile(uint8_t unmatchedFractionFactor) {
         uint32_t unmatchedChars = decodeSequenceAndReturnUnmatchedChars(seqStr);
         writeDNA(seqStr.data(), seqStr.size());
         if (params->isContigProperForRefExtension(seqStr.size(), unmatchedChars, unmatchedFractionFactor)) {
-            size_t refExtLength = refStr.size() + seqStr.size() <= refTotalLength? seqStr.size()
-                     : refTotalLength - refStr.size();
-            A_append(refStr, seqStr.data(), refExtLength);
+            loadRef(seqStr.data(), seqStr.size(), refLockPos);
             if (!params->dontUseRCinReference()) {
                 PgHelpers::reverseComplementInPlace((char *) seqStr.data(), seqStr.size());
-                refExtLength = refStr.size() + seqStr.size() <= refTotalLength? seqStr.size()
-                        : refTotalLength - refStr.size();
-                A_append(refStr, seqStr.data(), refExtLength);
+                loadRef(seqStr.data(), seqStr.size(), refLockPos);
             }
         }
     }
@@ -194,19 +201,43 @@ void MBGC_Decoder::decodeFile(uint8_t unmatchedFractionFactor) {
     hTemplatesPos = hTemplateEnd + 1;
 }
 
+void MBGC_Decoder::loadRef(const char *seqText, size_t seqLength, size_t refLockPos)  {
+    if (seqLength == 0)
+        return;
+    if (refPos == refTotalLength && refLockPos != refTotalLength) {
+        refPos = 1;
+    }
+    size_t tmpEnd = refLockPos;
+    size_t tmpLength = seqLength;
+    size_t tmpMax = tmpEnd < refPos ? refTotalLength : tmpEnd;
+    if (refPos + tmpLength > tmpMax) {
+        tmpLength = tmpMax - refPos;
+    }
+    A_memcpy((char*) refStr.data() + refPos, seqText, tmpLength);
+    refPos += tmpLength;
+    seqText += tmpLength;
+    seqLength = refPos == tmpEnd ? 0 : seqLength - tmpLength;
+    this->loadRef(seqText, seqLength, refLockPos);
+}
+
 void MBGC_Decoder::extractFiles() {
     size_t tmp;
-    while ((tmp = namesStr.find(MBGC_Params::FILE_SEPARATOR_MARK, namesPos)) != std::string::npos) {
-        decodeFile(unmatchedFractionFactors[fileIdx++]);
-        string name = namesStr.substr(namesPos, tmp - namesPos);
-        namesPos = tmp + 1;
-        bool ok = moveToFile(params->outputPath + name, outBuffer);
+    size_t endGuard = namesStr.rfind(params->filterPattern);
+    if (endGuard >= namesPos && endGuard != std::string::npos) {
+        while ((tmp = namesStr.find(MBGC_Params::FILE_SEPARATOR_MARK, namesPos)) != std::string::npos) {
+            decodeFile(unmatchedFractionFactors[fileIdx++]);
+            string name = namesStr.substr(namesPos, tmp - namesPos);
+            namesPos = tmp + 1;
+            bool ok = moveToFile(name, outBuffer, 0);
 #ifdef DEVELOPER_BUILD
-        if (ok)
-            params->validFilesCount++;
-        else
-            params->invalidFilesCount++;
+            if (ok)
+                params->validFilesCount++;
+            else
+                params->invalidFilesCount++;
 #endif
+            if (tmp > endGuard)
+                break;
+        }
     }
 }
 
@@ -219,7 +250,7 @@ void MBGC_Decoder::writeFilesParallelTask(const int thread_no) {
         if (in[thread_no] != out[thread_no]) {
             string &content = contentsBuf[thread_no][out[thread_no]];
             string &name = namesBuf[thread_no][out[thread_no]];
-            bool ok = moveToFile(params->outputPath + name, content);
+            bool ok = moveToFile(name, content, thread_no);
 #ifdef DEVELOPER_BUILD
             if (ok)
                 validFilesCount++;
@@ -248,6 +279,7 @@ void MBGC_Decoder::extractFilesParallel() {
 #pragma omp single
         {
             int writingThreadsCount = omp_get_num_threads() - 1;
+            extractedFilesCount.resize(writingThreadsCount, 0);
             in.resize(writingThreadsCount, 0);
             out.resize(writingThreadsCount, 0);
             namesBuf.resize(writingThreadsCount, vector<string>(WRITING_BUFFER_SIZE));
@@ -259,17 +291,22 @@ void MBGC_Decoder::extractFilesParallel() {
                 }
             }
             int thread_no = 0;
-            while ((tmp = namesStr.find(MBGC_Params::FILE_SEPARATOR_MARK, namesPos)) != std::string::npos) {
-                while (((in[thread_no] + 1) % WRITING_BUFFER_SIZE) == out[thread_no])
-                    nanosleep((const struct timespec[]){{0, 100L}}, NULL);
-                namesBuf[thread_no][in[thread_no]] = namesStr.substr(namesPos, tmp - namesPos);
-                namesPos = tmp + 1;
-                outBuffer = std::move(contentsBuf[thread_no][in[thread_no]]);
-                outBuffer.reserve(largestFileLength);
-                decodeFile(unmatchedFractionFactors[fileIdx++]);
-                contentsBuf[thread_no][in[thread_no]] = std::move(outBuffer);
-                in[thread_no] = (in[thread_no] + 1) % WRITING_BUFFER_SIZE;
-                thread_no = (thread_no + 1) % writingThreadsCount;
+            size_t endGuard = namesStr.rfind(params->filterPattern);
+            if (endGuard >= namesPos && endGuard != std::string::npos) {
+                while ((tmp = namesStr.find(MBGC_Params::FILE_SEPARATOR_MARK, namesPos)) != std::string::npos) {
+                    while (((in[thread_no] + 1) % WRITING_BUFFER_SIZE) == out[thread_no])
+                        nanosleep((const struct timespec[]) {{0, 100L}}, NULL);
+                    namesBuf[thread_no][in[thread_no]] = namesStr.substr(namesPos, tmp - namesPos);
+                    namesPos = tmp + 1;
+                    outBuffer = std::move(contentsBuf[thread_no][in[thread_no]]);
+                    outBuffer.reserve(largestFileLength);
+                    decodeFile(unmatchedFractionFactors[fileIdx++]);
+                    contentsBuf[thread_no][in[thread_no]] = std::move(outBuffer);
+                    in[thread_no] = (in[thread_no] + 1) % WRITING_BUFFER_SIZE;
+                    thread_no = (thread_no + 1) % writingThreadsCount;
+                    if (tmp > endGuard)
+                        break;
+                }
             }
             isDecoding = false;
         }
@@ -284,7 +321,7 @@ void MBGC_Decoder::decode() {
     }
     readParamsAndStats(fin);
     seqStr.reserve(largestContigLength);
-    refStr.reserve(refTotalLength);
+    refStr.resize(refTotalLength);
     outBuffer.reserve(largestFileLength);
     vector<string*> destStrings;
     destStrings.push_back(&namesStr);
@@ -295,21 +332,25 @@ void MBGC_Decoder::decode() {
     string tmpRefExtStr;
     destStrings.push_back(&tmpRefExtStr);
     destStrings.push_back(&literalStr);
-    string mapOff, mapLen;
-    destStrings.push_back(&mapOff);
-    destStrings.push_back(&mapLen);
+    string mapOffStream, mapLenStream, matchingLocksPosStream;
+    if (mbgcVersionMajor > 1 || (mbgcVersionMajor == 1 && mbgcVersionMinor >= 1))
+        destStrings.push_back(&matchingLocksPosStream);
+    destStrings.push_back(&mapOffStream);
+    destStrings.push_back(&mapLenStream);
     readCompressedCollectiveParallel(fin, destStrings);
     unmatchedFractionFactors.resize(tmpRefExtStr.size());
     memcpy((void*) unmatchedFractionFactors.data(), (void*) tmpRefExtStr.data(), tmpRefExtStr.size());
     seqsCountSrc.str(seqsCount);
-    mapOffSrc.str(mapOff);
-    mapLenSrc.str(mapLen);
+    mapOffSrc.str(mapOffStream);
+    mapLenSrc.str(mapLenStream);
+    matchingLocksPosSrc.str(matchingLocksPosStream);
     cout << "loaded archive - " << PgHelpers::time_millis() << " [ms]" << endl;
     size_t tmp;
 
     tmp = namesStr.find(MBGC_Params::FILE_SEPARATOR_MARK, namesPos);
     string name = namesStr.substr(namesPos, tmp - namesPos);
     namesPos = tmp + 1;
+    extractedFilesCount.push_back(0);
     decodeReference(name);
 
     if (PgHelpers::numberOfThreads == 1)
@@ -326,6 +367,8 @@ void MBGC_Decoder::decode() {
             fprintf(stderr, "Validation ERROR: errors in contents of %d decoded files.\n", params->invalidFilesCount);
     }
 #endif
+    uint32_t totalExtractedFilesCount = accumulate(extractedFilesCount.begin(), extractedFilesCount.end(), 0);
+    cout << "extracted " << totalExtractedFilesCount << (totalExtractedFilesCount == 1 ? " file" : " files") << endl;
 }
 
 void MBGC_Decoder::readParamsAndStats(fstream &fin) {
@@ -346,9 +389,11 @@ void MBGC_Decoder::readParamsAndStats(fstream &fin) {
     ch = fin.get(); // numberOfThreads
     params->coderLevel = fin.get();
     params->sequentialMatching = (bool) fin.get();
-    params->k = fin.get();;
+    params->k = fin.get();
     PgHelpers::readValue<int>(fin, params->k1, false);
     PgHelpers::readValue<int>(fin, params->k2, false);
+    if (mbgcVersionMajor > 1 || (mbgcVersionMajor == 1 && mbgcVersionMinor >= 1))
+        PgHelpers::readValue<uint8_t>(fin, params->skipMargin, false);
     PgHelpers::readValue<int>(fin, params->referenceFactor, false);
     params->refExtensionStrategy = fin.get();
     if (params->useLiteralsinReference()) {

@@ -5,14 +5,14 @@
 #include <fstream>
 
 #include "../utils/helper.h"
-#include "../matching/SparseEMMatcher.h"
+#include "../matching/SlidingWindowSparseEMMatcher.h"
 #include "MBGC_Params.h"
 
 class MBGC_Encoder {
 private:
     MBGC_Params *params;
 
-    SparseEMMatcher* matcher;
+    SlidingWindowSparseEMMatcher* matcher;
 
     ostringstream seqsCountDest;
 
@@ -37,8 +37,9 @@ private:
     string namesStr;
 
     size_t resCount = 0;
-    string mapOff;
-    string mapLen;
+    string locksPosStream;
+    string mapOffStream;
+    string mapLenStream;
 
     vector<string> fileNames;
     vector<string> fileHeadersTemplates;
@@ -50,6 +51,7 @@ private:
     vector<ostringstream> targetMapOffDests;
     vector<ostringstream> targetMapLenDests;
     vector<uint32_t> targetSeqsCounts;
+    vector<size_t> matchingLocksPos;
 
     void processFileName(string &fileName);
     void updateHeadersTemplate(uint32_t fileIndex, const string& header);
