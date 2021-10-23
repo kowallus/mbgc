@@ -50,6 +50,7 @@ public:
     virtual ~CoderProps() {}
 
     uint8_t getCoderType() const { return coder_type; }
+    virtual size_t getHeaderLen() { return 2 * sizeof(uint64_t) + sizeof(uint8_t); }
     virtual int getNumThreads() const { return numThreads; }
 
     virtual string log() = 0;
@@ -57,19 +58,44 @@ public:
 
 double simpleUintCompressionEstimate(uint64_t dataMaxValue, uint64_t typeMaxValue);
 
-char* Compress(size_t &destLen, const unsigned char *src, size_t srcLen, CoderProps* props,
-        double estimated_compression = 1, ostream* logout = PgHelpers::logout);
+unsigned char* Compress(size_t &destLen, const unsigned char *src, size_t srcLen, CoderProps* props,
+        double estimated_compression = 1, ostream* logout = PgHelpers::devout);
+void writeHeader(ostream &dest, size_t srcLen, size_t destLen, CoderProps* props);
 void writeCompressed(ostream &dest, const char *src, size_t srcLen, CoderProps* props, double estimated_compression = 1);
 void writeCompressed(ostream &dest, const string& srcStr, CoderProps* props, double estimated_compression = 1);
 
-char* componentCompress(ostream &dest, size_t &compLen, const char *src, size_t srcLen,
-        CoderProps* props, double estimated_compression = 1);
-void writeCompoundCompressionHeader(ostream &dest, size_t srcLen, size_t compLen, uint8_t coder_type);
-
-void Uncompress(char* dest, size_t destLen, istream &src, size_t srcLen, uint8_t coder_type,
-        ostream* logout = PgHelpers::logout);
-void Uncompress(char* dest, size_t destLen, const char* src, size_t srcLen, uint8_t coder_type);
+void Uncompress(unsigned char* dest, size_t destLen, istream &src, size_t srcLen, uint8_t coder_type,
+        ostream* logout = PgHelpers::devout);
+void Uncompress(unsigned char* dest, size_t destLen, string& src, size_t srcLen, uint8_t coder_type);
 void readCompressed(istream &src, string& dest);
+
+class CompoundCoderProps: public CoderProps {
+public:
+
+    CoderProps* primaryCoder;
+    CoderProps* secondaryCoder;
+    uint64_t compLen = 0;
+
+    CompoundCoderProps(CoderProps* primaryCoderProps, CoderProps* secondaryCoderProps)
+            : CoderProps(COMPOUND_CODER_TYPE, -1), primaryCoder(primaryCoderProps),
+              secondaryCoder(secondaryCoderProps) {
+        if (primaryCoderProps->getCoderType() == COMPOUND_CODER_TYPE) {
+            fprintf(stderr, "Primary compound coder cannot be of compound coder type.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    string log() {
+        return " compound_coders (" + secondaryCoder->log() + " over " + primaryCoder->log() + ")";
+    }
+
+    size_t getHeaderLen() {
+        return 3 * sizeof(uint64_t) + 2 * sizeof(uint8_t) + primaryCoder->getHeaderLen();
+    }
+
+    virtual ~CompoundCoderProps() { };
+
+};
 
 template<typename T>
 void readCompressed(istream &src, vector<T>& dest) {
@@ -86,7 +112,7 @@ void readCompressed(istream &src, vector<T>& dest) {
         return;
     PgHelpers::readValue<uint64_t>(src, srcLen, false);
     PgHelpers::readValue<uint8_t>(src, coder_type, false);
-    Uncompress((char*) dest.data(), destLen, src, srcLen, coder_type);
+    Uncompress((unsigned char*) dest.data(), destLen, src, srcLen, coder_type);
 #ifdef DEVELOPER_BUILD
     if (dump_after_decompression) {
         string dumpFileName = dump_after_decompression_prefix + (dump_after_decompression_counter < 10?"0":"");
@@ -133,9 +159,9 @@ public:
 
 int parallelBlocksCompress(unsigned char *&dest, size_t &destLen, const unsigned char *src, size_t srcLen,
                              ParallelBlocksCoderProps* props, double estimated_compression = 1,
-                             ostream* logout = PgHelpers::logout);
+                             ostream* logout = PgHelpers::devout);
 int parallelBlocksDecompress(unsigned char *dest, size_t *destLen, istream &src, size_t *srcLen,
-        ostream* logout = PgHelpers::logout);
+        ostream* logout = PgHelpers::devout);
 
 class CompressionJob {
 private:
@@ -153,7 +179,7 @@ public:
     void appendLog(string txt) { log.append(txt); };
 
     static void writeCompressedCollectiveParallel(ostream &dest, vector<CompressionJob> &cJobs,
-            ostream* logout = PgHelpers::logout);
+            ostream* logout = PgHelpers::devout);
 };
 
 void readCompressedCollectiveParallel(istream &src, vector<string*> &destStrings);

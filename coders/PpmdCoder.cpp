@@ -64,7 +64,7 @@ MY_STDAPI Ppmd7Compress(unsigned char *&dest, size_t &destLen, const unsigned ch
                         PpmdCoderProps* props, double estimated_compression) {
 
     if (props->getNumThreads() != 1) {
-        cout << "Unsupported number of threads " << props->getNumThreads() << " in ppmd compressor." << endl;
+        cerr << "Unsupported number of threads " << props->getNumThreads() << " in ppmd compressor." << endl;
         exit(EXIT_FAILURE);
     }
     CPpmd7 ppmd;
@@ -80,7 +80,7 @@ MY_STDAPI Ppmd7Compress(unsigned char *&dest, size_t &destLen, const unsigned ch
     try {
         dest = new unsigned char[maxDestSize];
     } catch (const std::bad_alloc& e) {
-        cout << "Allocation failed: " << e.what() << endl;
+        cerr << "Allocation failed: " << e.what() << endl;
         maxDestSize -= srcLen / 3 * estimated_compression;
         dest = new unsigned char[maxDestSize];
     }

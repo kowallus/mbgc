@@ -76,7 +76,7 @@ public:
     SlidingWindowSparseEMMatcher(const size_t refLengthLimit, const uint32_t targetMatchLength,
                                  int _k1 = -1, int _k2 = -1, int skipMargin = 0, uint32_t minMatchLength = UINT32_MAX);
 
-    void disableSlidingWindow() { swSize = 0; };
+    void disableSlidingWindow() { swSize = 0; swEnd = 0; };
 
     void setSlidingWindowSize(uint8_t factor) { swSize = this->maxRefLength / factor; };
 

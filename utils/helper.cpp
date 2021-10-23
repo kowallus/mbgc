@@ -3,10 +3,10 @@
 #include "byteswap.h"
 #include <sys/stat.h>
 
-
-std::ostream *PgHelpers::logout = &std::cout;
-
 int PgHelpers::numberOfThreads = 8;
+
+std::ostream *PgHelpers::appout = &std::cout;
+std::ostream *PgHelpers::devout = &std::cout;
 
 NullBuffer null_buffer;
 std::ostream null_stream(&null_buffer);

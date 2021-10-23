@@ -78,7 +78,7 @@ void SlidingWindowSparseEMMatcher::initParams(uint32 minMatchLength, int _k1, in
     else if (L > 32) K = 28;
     else K = (L / 4 - 1) * 4;
     if (minMatchLength < 24) {
-        cout << "Error: Minimal matching length too short!" << endl;
+        cerr << "Error: Minimal matching length too short!" << endl;
         exit(EXIT_FAILURE);
     }
     int KmmL = (minMatchLength / 4 - 1) * 4;
@@ -88,7 +88,7 @@ void SlidingWindowSparseEMMatcher::initParams(uint32 minMatchLength, int _k1, in
     k2 = _k2 != -1?_k2:k2;
 
     hashFunc32 = hashFuncMatrix[K][H];
-    v1logger = PgHelpers::logout;
+    v1logger = PgHelpers::devout;
 
     LK2 = (L - K) / 2;
     LK2_MINUS_4 = LK2 - 4;
@@ -102,15 +102,15 @@ void SlidingWindowSparseEMMatcher::initParams(uint32 minMatchLength, int _k1, in
 }
 
 void SlidingWindowSparseEMMatcher::displayParams() {
-	std::cout << "SparseEM PARAMETERS: ";
-	std::cout << "k-mer exact match length = " << L << "; ";
-	std::cout << "hash pattern length = " << K << "; ";
-	std::cout << "HASH_SIZE = " << hash_size << "; ";
-	std::cout << "k1 = " << k1 << "; ";
-	std::cout << "k2 = " << k2 << "; ";
-    std::cout << "skipMargin = " << skipMargin << std::endl;
-	*PgHelpers::logout << "Hash function: " << hashNames[H] << std::endl;
-    *PgHelpers::logout << "Hash bin size: 1" << std::endl;
+	*PgHelpers::appout << "SparseEM PARAMETERS: ";
+	*PgHelpers::appout << "k-mer exact match length = " << L << "; ";
+	*PgHelpers::appout << "hash pattern length = " << K << "; ";
+	*PgHelpers::appout << "HASH_SIZE = " << hash_size << "; ";
+	*PgHelpers::appout << "k1 = " << k1 << "; ";
+	*PgHelpers::appout << "k2 = " << k2 << "; ";
+    *PgHelpers::appout << "skipMargin = " << skipMargin << std::endl;
+	*PgHelpers::devout << "Hash function: " << hashNames[H] << std::endl;
+    *PgHelpers::devout << "Hash bin size: 1" << std::endl;
 }
 
 void SlidingWindowSparseEMMatcher::calcCoprimes()

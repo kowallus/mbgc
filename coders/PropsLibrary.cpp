@@ -52,6 +52,10 @@ unique_ptr<CoderProps> getDefaultCoderProps(uint8_t coder_type, uint8_t coder_le
     }
 }
 
+unique_ptr<CoderProps> getCompoundCoderProps(CoderProps* firstCoderProps, CoderProps* secondCoderProps) {
+    return unique_ptr<CoderProps>(new CompoundCoderProps(firstCoderProps, secondCoderProps));
+}
+
 unique_ptr<CoderProps> getReadsPositionsCoderProps(uint8_t coder_level, uint8_t lzma_pos_dataperiod_param) {
     int noOfThreads = PgHelpers::numberOfThreads > 1 ? 2 : 1;
     int lc = 8;

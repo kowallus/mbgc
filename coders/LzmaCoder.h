@@ -116,6 +116,6 @@ MY_STDAPI LzmaCompress(unsigned char *&dest, size_t &destLen, const unsigned cha
                        CLzmaEncProps* props, double estimated_compression);
 
 MY_STDAPI LzmaUncompress(unsigned char *dest, size_t *destLen, istream &src, size_t *srcLen,
-        ostream* logout = PgHelpers::logout);
+        ostream* logout = PgHelpers::devout);
 
 #endif //PGTOOLS_LZMACODER_H

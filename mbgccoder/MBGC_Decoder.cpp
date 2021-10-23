@@ -3,6 +3,7 @@
 #include "../coders/CodersLib.h"
 #include "../libs/asmlib.h"
 
+#include <fstream>
 #include <omp.h>
 #include <numeric>
 
@@ -33,15 +34,12 @@ inline void A_append(string &dest, string &src) {
 }
 
 void MBGC_Decoder::writeDNA(const char *sequence, int64_t length) {
+    const int dnaLineLength = params->dnaLineLength;
     uint32_t pos = 0;
-#ifdef DEVELOPER_BUILD
-    while (pos < length - 80 && !params->disableDNAformatting) {
-#else
-    while (pos < length - 80) {
-#endif
-        A_append(outBuffer, sequence + pos, 80);
+    while (pos < length - dnaLineLength && params->enableDNAformatting) {
+        A_append(outBuffer, sequence + pos, dnaLineLength);
         outBuffer.push_back('\n');
-        pos += 80;
+        pos += dnaLineLength;
     }
     if (length - pos > 0) {
         A_append(outBuffer, sequence + pos, length - pos);
@@ -61,7 +59,7 @@ void MBGC_Decoder::decodeHeader(string& headerTemplate) {
     A_append(outBuffer, headerTemplate, tPos, headerTemplate.size() - tPos);
 }
 
-bool MBGC_Decoder::moveToFile(const string& filename, string& src, const int thread_no) {
+bool MBGC_Decoder::moveToFile(const string& filename, string& src, const int thread_no, bool append) {
     if (filename.find(params->filterPattern) == string::npos) {
         src.clear();
         return true;
@@ -69,6 +67,10 @@ bool MBGC_Decoder::moveToFile(const string& filename, string& src, const int thr
     string filepath = params->outputPath + filename;
 #ifdef DEVELOPER_BUILD
     if (params->validationMode) {
+        if (filesCount == 1 && unmatchedFractionFactors.size() > 1) {
+            fprintf(stderr, "Validation in single fasta mode archive not supported.\n");
+            exit(EXIT_FAILURE);
+        }
         string tmpfile = filepath;
         {
             if (!fstream(filepath)) {
@@ -79,19 +81,19 @@ bool MBGC_Decoder::moveToFile(const string& filename, string& src, const int thr
                 }
             }
         }
-        gzFile file = gzopen(tmpfile.c_str(), "r");
+        gzFile file = gzopen(tmpfile.c_str());
         bool ok = true;
         if (src.size() != file.size) {
             if (params->invalidFilesCount < 100)
-                *PgHelpers::logout << "Validation ERROR: ~" << (params->invalidFilesCount + params->validFilesCount) <<
-                ". " << filepath << " size differ (" << src.size() << " instead of "
+                *PgHelpers::devout << "Validation ERROR: ~" << (params->invalidFilesCount + params->validFilesCount) <<
+                                   ". " << filepath << " size differ (" << src.size() << " instead of "
                     << file.size << ")" << endl;
             ok = false;
         }
         if (ok && memcmp(src.data(), file.out, file.size) != 0) {
             if (params->invalidFilesCount < 100)
-                *PgHelpers::logout << "Validation ERROR: ~"  << (params->invalidFilesCount + params->validFilesCount) <<
-                ". " << filepath << " contents differ." << endl;
+                *PgHelpers::devout << "Validation ERROR: ~" << (params->invalidFilesCount + params->validFilesCount) <<
+                                   ". " << filepath << " contents differ." << endl;
             ok = false;
         }
         src.clear();
@@ -99,15 +101,42 @@ bool MBGC_Decoder::moveToFile(const string& filename, string& src, const int thr
         return ok;
     }
 #endif
-    PgHelpers::createFolders(filepath);
-    fstream fstr(filepath, ios::out | ios::binary | ios::trunc);
-    if (!fstr)
-        return false;
-    PgHelpers::writeArray(fstr, (void *) src.data(), src.size());
-    fstr.close();
+    if (params->outputPath == MBGC_Params::STANDARD_IO_POSIX_ALIAS)
+        PgHelpers::writeArray(cout, (void *) src.data(), src.size());
+    else {
+        PgHelpers::createFolders(filepath);
+        fstream fstr(filepath, ios::out | ios::binary | (append ? ios::app : ios::trunc));
+        if (!fstr) {
+            fprintf(stderr, "Error: cannot create a file %s\n", filepath.c_str());
+            return false;
+        }
+        PgHelpers::writeArray(fstr, (void *) src.data(), src.size());
+        fstr.close();
+    }
     extractedFilesCount[thread_no]++;
     src.clear();
     return true;
+}
+
+void MBGC_Decoder::initReference(const string &name) {
+    size_t tmp;
+    rcStart = 0;
+    refStr[refPos++] = 0;
+    if (literalStr.empty()) {
+        literalPos = 0;
+        return;
+    }
+    tmp = literalStr.find(MBGC_Params::SEQ_SEPARATOR_MARK, literalPos);
+    A_memcpy((char *) refStr.data() + refPos, literalStr.data() + literalPos, tmp - literalPos);
+    refPos += tmp - literalPos;
+    rcStart += tmp - literalPos;
+    literalPos = tmp + 1;
+    if (!params->dontUseRCinReference()) {
+        char *refPtr = (char *) refStr.data() + 1;
+        PgHelpers::reverseComplement(refPtr, rcStart, refPtr + rcStart);
+        refPos += rcStart;
+    }
+    bool ok = moveToFile(name, outBuffer, 0);
 }
 
 void MBGC_Decoder::decodeReference(const string &name) {
@@ -118,10 +147,27 @@ void MBGC_Decoder::decodeReference(const string &name) {
     string headerTemplate(headersTemplates, hTemplatesPos, hTemplateEnd - hTemplatesPos);
     uint32_t seqCount;
     PgHelpers::readValue<uint32_t>(seqsCountSrc, seqCount, false);
+#ifdef DEVELOPER_BUILD
+    if (params->concatHeadersAndSequencesMode) {
+        outBuffer.push_back('>');
+        for (uint32_t i = 0; i < seqCount; i++) {
+            if (i) outBuffer.push_back('&');
+            decodeHeader(headerTemplate);
+        }
+        outBuffer.push_back('\n');
+    }
+    for (uint32_t i = 0; i < seqCount; i++) {
+        if (!params->concatHeadersAndSequencesMode) {
+            outBuffer.push_back('>');
+            decodeHeader(headerTemplate);
+            outBuffer.push_back('\n');
+        }
+#else
     for (uint32_t i = 0; i < seqCount; i++) {
         outBuffer.push_back('>');
         decodeHeader(headerTemplate);
         outBuffer.push_back('\n');
+#endif
         tmp = literalStr.find(MBGC_Params::SEQ_SEPARATOR_MARK, literalPos);
         writeDNA(literalStr.data() + literalPos, tmp - literalPos);
         A_memcpy((char *) refStr.data() + refPos, literalStr.data() + literalPos, tmp - literalPos);
@@ -159,12 +205,19 @@ uint32_t MBGC_Decoder::decodeSequenceAndReturnUnmatchedChars(string &dest) {
         A_append(dest, literalStr, literalPos, markPos - literalPos);
         unmatchedChars += markPos - literalPos;
         literalPos = markPos + 1;
-        uint32_t matchSrcPos = 0;
-        PgHelpers::readValue<uint32_t>(mapOffSrc, matchSrcPos, false);
+        uint32_t matchSrc32bitPos = 0;
+        PgHelpers::readValue<uint32_t>(mapOffSrc, matchSrc32bitPos, false);
         uint32_t matchLength = 0;
         PgHelpers::readUIntWordFrugal<uint32_t>(mapLenSrc, matchLength);
         matchLength += minMatchLength;
-        A_append(dest, refStr, matchSrcPos, matchLength);
+        if (refTotalLength <= UINT32_MAX)
+            A_append(dest, refStr, matchSrc32bitPos, matchLength);
+        else {
+            uint8_t tmp;
+            PgHelpers::readValue<uint8_t>(mapOff5thByteSrc, tmp, false);
+            uint64_t matchSrcPos = (((uint64_t) tmp) << 32) + matchSrc32bitPos;
+            A_append(dest, refStr, matchSrcPos, matchLength);
+        }
     }
     A_append(dest, literalStr, literalPos, seqEnd - literalPos);
     unmatchedChars += seqEnd - literalPos;
@@ -183,10 +236,27 @@ void MBGC_Decoder::decodeFile(uint8_t unmatchedFractionFactor) {
     size_t refLockPos = this->refTotalLength;
     if (matchingLocksPosSrc.rdbuf()->in_avail())
         PgHelpers::readValue<size_t>(matchingLocksPosSrc, refLockPos, false);
+#ifdef DEVELOPER_BUILD
+    if (params->concatHeadersAndSequencesMode) {
+        outBuffer.push_back('>');
+        for (uint32_t i = 0; i < seqCount; i++) {
+            if (i) outBuffer.push_back('&');
+            decodeHeader(headerTemplate);
+        }
+        outBuffer.push_back('\n');
+    }
+    for (uint32_t i = 0; i < seqCount; i++) {
+        if (!params->concatHeadersAndSequencesMode) {
+            outBuffer.push_back('>');
+            decodeHeader(headerTemplate);
+            outBuffer.push_back('\n');
+        }
+#else
     for (uint32_t i = 0; i < seqCount; i++) {
         outBuffer.push_back('>');
         decodeHeader(headerTemplate);
         outBuffer.push_back('\n');
+#endif
         uint32_t unmatchedChars = decodeSequenceAndReturnUnmatchedChars(seqStr);
         writeDNA(seqStr.data(), seqStr.size());
         if (params->isContigProperForRefExtension(seqStr.size(), unmatchedChars, unmatchedFractionFactor)) {
@@ -224,11 +294,13 @@ void MBGC_Decoder::extractFiles() {
     size_t tmp;
     size_t endGuard = namesStr.rfind(params->filterPattern);
     if (endGuard >= namesPos && endGuard != std::string::npos) {
-        while ((tmp = namesStr.find(MBGC_Params::FILE_SEPARATOR_MARK, namesPos)) != std::string::npos) {
+        while (fileIdx < unmatchedFractionFactors.size()) {
             decodeFile(unmatchedFractionFactors[fileIdx++]);
+            if (filesCount == 1) namesPos = 0;
+            tmp = namesStr.find(MBGC_Params::FILE_SEPARATOR_MARK, namesPos);
             string name = namesStr.substr(namesPos, tmp - namesPos);
             namesPos = tmp + 1;
-            bool ok = moveToFile(name, outBuffer, 0);
+            bool ok = moveToFile(name, outBuffer, 0, filesCount == 1);
 #ifdef DEVELOPER_BUILD
             if (ok)
                 params->validFilesCount++;
@@ -314,12 +386,17 @@ void MBGC_Decoder::extractFilesParallel() {
 }
 
 void MBGC_Decoder::decode() {
-    fstream fin(params->archiveFileName);
-    if (!fin) {
-        fprintf(stderr, "Cannot open archive %s\n", params->archiveFileName.c_str());
-        exit(EXIT_FAILURE);
+    istream* in;
+    if (decompressFromStdin())
+        in = &cin;
+    else {
+        in = new fstream(params->archiveFileName);
+        if (!*in) {
+            fprintf(stderr, "Cannot open archive %s\n", params->archiveFileName.c_str());
+            exit(EXIT_FAILURE);
+        }
     }
-    readParamsAndStats(fin);
+    readParamsAndStats(*in);
     seqStr.reserve(largestContigLength);
     refStr.resize(refTotalLength);
     outBuffer.reserve(largestFileLength);
@@ -332,27 +409,37 @@ void MBGC_Decoder::decode() {
     string tmpRefExtStr;
     destStrings.push_back(&tmpRefExtStr);
     destStrings.push_back(&literalStr);
-    string mapOffStream, mapLenStream, matchingLocksPosStream;
+    string mapOffStream, mapOff5thByteStream, mapLenStream, matchingLocksPosStream;
     if (mbgcVersionMajor > 1 || (mbgcVersionMajor == 1 && mbgcVersionMinor >= 1))
         destStrings.push_back(&matchingLocksPosStream);
     destStrings.push_back(&mapOffStream);
+    if (refTotalLength > UINT32_MAX)
+        destStrings.push_back(&mapOff5thByteStream);
     destStrings.push_back(&mapLenStream);
-    readCompressedCollectiveParallel(fin, destStrings);
+    readCompressedCollectiveParallel(*in, destStrings);
     unmatchedFractionFactors.resize(tmpRefExtStr.size());
     memcpy((void*) unmatchedFractionFactors.data(), (void*) tmpRefExtStr.data(), tmpRefExtStr.size());
     seqsCountSrc.str(seqsCount);
     mapOffSrc.str(mapOffStream);
+    mapOff5thByteSrc.str(mapOff5thByteStream);
     mapLenSrc.str(mapLenStream);
     matchingLocksPosSrc.str(matchingLocksPosStream);
-    cout << "loaded archive - " << PgHelpers::time_millis() << " [ms]" << endl;
+    if (!decompressFromStdin())
+        delete(in);
+    *PgHelpers::appout << "loaded archive - " << PgHelpers::time_millis() << " [ms]" << endl;
     size_t tmp;
 
     tmp = namesStr.find(MBGC_Params::FILE_SEPARATOR_MARK, namesPos);
     string name = namesStr.substr(namesPos, tmp - namesPos);
-    namesPos = tmp + 1;
     extractedFilesCount.push_back(0);
-    decodeReference(name);
-
+    if (params->sequentialMatching && (mbgcVersionMajor > 1 || (mbgcVersionMajor == 1 && mbgcVersionMinor >= 2)))
+        initReference(name);
+    else {
+        namesPos = tmp + 1;
+        decodeReference(name);
+    }
+    if (filesCount == 1 || params->outputPath == MBGC_Params::STANDARD_IO_POSIX_ALIAS)
+        PgHelpers::numberOfThreads = 1;
     if (PgHelpers::numberOfThreads == 1)
         extractFiles();
     else
@@ -360,7 +447,7 @@ void MBGC_Decoder::decode() {
 
 #ifdef DEVELOPER_BUILD
     if (params->validationMode) {
-        *PgHelpers::logout << "Validation" << (params->validFilesCount == filesCount ? "" : " ERROR") <<
+        *PgHelpers::devout << "Validation" << (params->validFilesCount == filesCount ? "" : " ERROR") <<
                            ": correctly decoded " << params->validFilesCount << " out of " << filesCount << " files."
                            << endl;
         if (params->invalidFilesCount)
@@ -368,34 +455,37 @@ void MBGC_Decoder::decode() {
     }
 #endif
     uint32_t totalExtractedFilesCount = accumulate(extractedFilesCount.begin(), extractedFilesCount.end(), 0);
-    cout << "extracted " << totalExtractedFilesCount << (totalExtractedFilesCount == 1 ? " file" : " files") << endl;
+    if (filesCount == 1 && totalExtractedFilesCount)
+        totalExtractedFilesCount = 1;
+    *PgHelpers::appout << "extracted " << totalExtractedFilesCount << (totalExtractedFilesCount == 1 ? " file" : " files") << endl;
 }
 
-void MBGC_Decoder::readParamsAndStats(fstream &fin) {
-    for (int i = 0; i < strlen(params->MBGC_HEADER); i++) {
-        if (params->MBGC_HEADER[i] != fin.get()) {
+void MBGC_Decoder::readParamsAndStats(istream &in) {
+    for (int i = 0; i < strlen(MBGC_Params::MBGC_HEADER); i++) {
+        if (MBGC_Params::MBGC_HEADER[i] != in.get()) {
             fprintf(stderr, "Error processing header.\n");
             exit(EXIT_FAILURE);
         }
     }
-    char ch = fin.get();
-    if (ch != params->MBGC_VERSION_MODE) {
+    char ch = in.get();
+    if (ch != MBGC_Params::MBGC_VERSION_MODE) {
         fprintf(stderr, "Error processing header.\n");
         exit(EXIT_FAILURE);
     }
-    mbgcVersionMajor = fin.get();
-    mbgcVersionMinor = fin.get();
-    mbgcVersionRevision = fin.get();
-    ch = fin.get(); // numberOfThreads
-    params->coderLevel = fin.get();
-    params->sequentialMatching = (bool) fin.get();
-    params->k = fin.get();
-    PgHelpers::readValue<int>(fin, params->k1, false);
-    PgHelpers::readValue<int>(fin, params->k2, false);
+    mbgcVersionMajor = in.get();
+    mbgcVersionMinor = in.get();
+    mbgcVersionRevision = in.get();
+    ch = in.get(); // numberOfThreads
+    params->coderLevel = in.get();
+    params->sequentialMatching = (bool) in.get();
+    params->k = in.get();
+    PgHelpers::readValue<int>(in, params->k1, false);
+    PgHelpers::readValue<int>(in, params->k2, false);
     if (mbgcVersionMajor > 1 || (mbgcVersionMajor == 1 && mbgcVersionMinor >= 1))
-        PgHelpers::readValue<uint8_t>(fin, params->skipMargin, false);
-    PgHelpers::readValue<int>(fin, params->referenceFactor, false);
-    params->refExtensionStrategy = fin.get();
+        PgHelpers::readValue<uint8_t>(in, params->skipMargin, false);
+    PgHelpers::readValue<int>(in, params->referenceFactor, false);
+    params->refExtensionStrategy = in.get();
+#ifdef DEVELOPER_BUILD
     if (params->useLiteralsinReference()) {
         fprintf(stderr, "Literals ref extension strategy decompression not implemented.\n");
         exit(EXIT_FAILURE);
@@ -406,21 +496,29 @@ void MBGC_Decoder::readParamsAndStats(fstream &fin) {
     }
     int tmp;
     if (params->usesCombinedRefExtensionStrategy()) {
-#ifndef DEVELOPER_BUILD
-        fprintf(stderr, "Combined ref extension strategy available only in developer build.\n");
-        exit(EXIT_FAILURE);
-#endif
-        PgHelpers::readValue<int>(fin, tmp, false);
-        if (tmp != params->MINIMAL_UNMATCHED_LENGTH_FACTOR) {
+        PgHelpers::readValue<int>(in, tmp, false);
+        if (tmp != MBGC_Params::MINIMAL_UNMATCHED_LENGTH_FACTOR) {
             fprintf(stderr, "Invalid minimal unmatched length factor: %d (expected %d).\n", tmp,
-                    params->MINIMAL_UNMATCHED_LENGTH_FACTOR);
+                    MBGC_Params::MINIMAL_UNMATCHED_LENGTH_FACTOR);
             exit(EXIT_FAILURE);
         }
     }
-    PgHelpers::readValue<uint32_t>(fin, filesCount, false);
-    PgHelpers::readValue<size_t>(fin, totalFilesLength, false);
-    PgHelpers::readValue<int>(fin, rcStart, false);
-    PgHelpers::readValue<uint32_t>(fin, largestFileLength, false);
-    PgHelpers::readValue<uint32_t>(fin, largestContigLength, false);
-    PgHelpers::readValue<uint32_t>(fin, refTotalLength, false);
+#endif
+    PgHelpers::readValue<uint32_t>(in, filesCount, false);
+    PgHelpers::readValue<size_t>(in, totalFilesLength, false);
+    PgHelpers::readValue<int>(in, rcStart, false);
+    PgHelpers::readValue<uint32_t>(in, largestFileLength, false);
+    PgHelpers::readValue<uint32_t>(in, largestContigLength, false);
+    if (mbgcVersionMajor > 1 || (mbgcVersionMajor == 1 && mbgcVersionMinor >= 2))
+        PgHelpers::readValue<uint64_t>(in, refTotalLength, false);
+    else {
+        uint32_t tmp;
+        PgHelpers::readValue<uint32_t>(in, tmp, false);
+        refTotalLength = tmp;
+    }
+
+}
+
+bool MBGC_Decoder::decompressFromStdin() {
+    return params->archiveFileName == MBGC_Params::STANDARD_IO_POSIX_ALIAS;
 }

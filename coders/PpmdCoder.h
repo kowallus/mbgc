@@ -22,6 +22,6 @@ MY_STDAPI Ppmd7Compress(unsigned char *&dest, size_t &destLen, const unsigned ch
                         PpmdCoderProps* coder_props, double estimated_compression);
 
 MY_STDAPI PpmdUncompress(unsigned char *dest, size_t *destLen, istream &src, size_t *srcLen,
-        ostream* logout = PgHelpers::logout);
+        ostream* logout = PgHelpers::devout);
 
 #endif //PGTOOLS_PPMDCODER_H

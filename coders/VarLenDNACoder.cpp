@@ -135,7 +135,7 @@ PgHelpers::VarLenDNACoder::Compress(unsigned char *&dest, size_t &destLen, const
     try {
         dest = new unsigned char[maxDestSize];
     } catch (const std::bad_alloc& e) {
-        cout << "WARNING: Allocation failed: " << e.what() << endl;
+        cerr << "WARNING: Allocation failed: " << e.what() << endl;
         maxDestSize -= srcLen / 3 * COMPRESSION_ESTIMATION;
         dest = new unsigned char[maxDestSize];
     }

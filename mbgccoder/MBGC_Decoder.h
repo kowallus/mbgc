@@ -2,7 +2,6 @@
 #define MBGC_MBGC_DECODER_H
 
 #include <iostream>
-#include <fstream>
 
 #include "../utils/helper.h"
 #include "MBGC_Params.h"
@@ -23,7 +22,7 @@ private:
     size_t refPos = 0;
     int rcStart;
 
-    uint32_t refTotalLength;
+    uint64_t refTotalLength;
     uint32_t filesCount;
     size_t totalFilesLength;
     uint32_t largestContigLength;
@@ -41,18 +40,21 @@ private:
 
     int fileIdx = 0;
 
-    istringstream mapOffSrc, mapLenSrc, seqsCountSrc, matchingLocksPosSrc;
+    istringstream mapOffSrc, mapOff5thByteSrc, mapLenSrc, seqsCountSrc, matchingLocksPosSrc;
+
+    bool decompressFromStdin();
 
     void writeDNA(const char *sequence, int64_t length);
     void decodeHeader(string& headerTemplate);
-    bool moveToFile(const string& filepath, string& src, const int thread_no);
+    bool moveToFile(const string& filepath, string& src, int thread_no, bool append = false);
+    void initReference(const string &name);
     void decodeReference(const string &name);
     uint32_t decodeSequenceAndReturnUnmatchedChars(string &dest);
     void decodeFile(uint8_t unmatchedFractionFactor);
     void loadRef(const char *seqText, size_t seqLength, size_t i1);
     void extractFiles();
 
-    void writeFilesParallelTask(const int thread_no);
+    void writeFilesParallelTask(int thread_no);
     void extractFilesParallel();
     static const int WRITING_BUFFER_SIZE = 32;
     vector<vector<string>> contentsBuf;
@@ -61,12 +63,11 @@ private:
     vector<uint32_t> extractedFilesCount;
     bool isDecoding;
 
-    void readParamsAndStats(fstream &fin);
-
+    void readParamsAndStats(istream &in);
 
 public:
 
-    MBGC_Decoder(MBGC_Params *mbgcParams);
+    explicit MBGC_Decoder(MBGC_Params *mbgcParams);
 
     void decode();
 

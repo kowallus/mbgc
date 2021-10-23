@@ -21,7 +21,7 @@ namespace PgIndex {
         uint_max combinationCount = powuint(symbolsCount, symbolsPerElement);
         maxValue = combinationCount - 1;
         if (maxValue > (int) (uint8_t) - 1)
-            cout << "ERROR in symbols packaging: max value for type: " << (int) (uint8_t) - 1 << " while max " << " \n";
+            cerr << "ERROR in symbols packaging: max value for type: " << (int) (uint8_t) - 1 << " while max " << " \n";
 
         reverse = new char_pg*[combinationCount];
         reverseFlat = new char_pg[combinationCount * symbolsPerElement];
@@ -43,7 +43,7 @@ namespace PgIndex {
         uint_max combinationCount = powuint(symbolsCount, symbolsPerElement);
         maxValue = combinationCount - 1;
         if (maxValue > (int) (uint8_t) - 1)
-            cout << "ERROR in symbols packaging: max value for type: " << (int) (uint8_t) - 1 << " while max " << " \n";
+            cerr << "ERROR in symbols packaging: max value for type: " << (int) (uint8_t) - 1 << " while max " << " \n";
 
         reverse = new char_pg*[combinationCount];
         reverseFlat = new char_pg[combinationCount * symbolsPerElement];

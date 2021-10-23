@@ -1,0 +1,3 @@
+GCA_000585755.1_Lm1823_genomic.fna
+GCA_000585775.1_Lm1824_genomic.fna
+GCA_000585795.1_Lm1840_genomic.fna

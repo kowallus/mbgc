@@ -143,7 +143,8 @@ namespace PgHelpers {
 
     // input output routines
 
-    extern std::ostream *logout;
+    extern std::ostream *appout;
+    extern std::ostream *devout;
 
     void createFolders(string pathToFile);
 

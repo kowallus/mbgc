@@ -10,11 +10,13 @@ class MBGC_Params {
 public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 1;
-    static const char MBGC_VERSION_MINOR = 1;
-    static const char MBGC_VERSION_REVISION = 1;
+    static const char MBGC_VERSION_MINOR = 2;
+    static const char MBGC_VERSION_REVISION = 0;
 
     static constexpr char *const MBGC_HEADER = (char*) "MBGC";
     static constexpr char *const TEMPORARY_FILE_SUFFIX = (char*) ".temp";
+
+    static constexpr char *const STANDARD_IO_POSIX_ALIAS = (char*) "-";
 
     static const int FAST_MODE_NO_OF_THREADS = 12;
     static const int DEFAULT_NO_OF_THREADS = 8;
@@ -40,31 +42,40 @@ public:
 
     static const int DEFAULT_REFERENCE_SLIDING_WINDOW_FACTOR = 16;
 
+    static const int DEFAULT_UNMATCHED_LENGTH_FACTOR = 192;
+    static const int MINIMAL_UNMATCHED_LENGTH_FACTOR = 128;
+
+    static const size_t MIN_REF_INIT_SIZE = 1 << 21;
+    static const size_t SEQ_BLOCK_SIZE = 1 << 17;
+
+    static const uint8_t FRACTION_REF_EXTENSION_STRATEGY = 0;
+    static const uint8_t NO_RC_REF_EXTENSION_STRATEGY_MASK = 2;
+
+    static const size_t REFERENCE_LENGTH_LIMIT = (size_t) UINT32_MAX << 8;
+
+    uint8_t refExtensionStrategy = FRACTION_REF_EXTENSION_STRATEGY;
+
+    uint8_t dynamicUnmatchedFractionFactorLimit = DEFAULT_UNMATCHED_LENGTH_FACTOR;
+    uint8_t currentUnmatchedFractionFactor = DEFAULT_UNMATCHED_LENGTH_FACTOR;
+
+    inline bool dontUseRCinReference() const {
+        return refExtensionStrategy & NO_RC_REF_EXTENSION_STRATEGY_MASK;
+    }
+
+#ifdef DEVELOPER_BUILD
+    static const uint8_t COMBINED_REF_EXTENSION_STRATEGY_MASK = 1;
+    static const uint8_t LITERAL_REF_EXTENSION_STRATEGY_MASK = 4;
     static const int INITIAL_REF_EXT_GOAL_FACTOR = 8;
     static const int FINAL_REF_EXT_END_MARGIN_FILES = 16;
     static const int RELAX_FRACTION_FACTOR_FACTOR = 4;
     static const int TIGHTEN_FRACTION_FACTOR_REDUCTION = 4;
-    static const int DEFAULT_UNMATCHED_LENGTH_FACTOR = 192;
-    static const int MINIMAL_UNMATCHED_LENGTH_FACTOR = 128;
     static const int REF_LITERAL_BEFORE_AFTER_EXT = 0;
     static const int REF_LITERAL_MINIMAL_LENGTH_EXT = 64;
-    static const size_t SEQ_BLOCK_SIZE = 1 << 17;
-
-    static const uint8_t FRACTION_REF_EXTENSION_STRATEGY = 0;
-    static const uint8_t COMBINED_REF_EXTENSION_STRATEGY_MASK = 1;
-    static const uint8_t NO_RC_REF_EXTENSION_STRATEGY_MASK = 2;
-    static const uint8_t LITERAL_REF_EXTENSION_STRATEGY_MASK = 4;
     static const uint8_t BLOCK_REF_EXTENSION_STRATEGY_MASK = 8;
     static const uint8_t DYNAMIC_REF_EXT_FACTOR_MASK = 16;
 
-    uint8_t refExtensionStrategy = FRACTION_REF_EXTENSION_STRATEGY;
-
     inline bool usesCombinedRefExtensionStrategy() const {
         return refExtensionStrategy & COMBINED_REF_EXTENSION_STRATEGY_MASK;
-    }
-
-    inline bool dontUseRCinReference() const {
-        return refExtensionStrategy & NO_RC_REF_EXTENSION_STRATEGY_MASK;
     }
 
     inline bool useLiteralsinReference() const {
@@ -78,9 +89,6 @@ public:
     inline bool dynamicRefExtStrategy() const {
         return refExtensionStrategy & DYNAMIC_REF_EXT_FACTOR_MASK;
     }
-
-    uint8_t dynamicUnmatchedFractionFactorLimit = DEFAULT_UNMATCHED_LENGTH_FACTOR;
-    uint8_t currentUnmatchedFractionFactor = DEFAULT_UNMATCHED_LENGTH_FACTOR;
 
     void relaxUnmatchedFractionFactor() {
         int tmp = currentUnmatchedFractionFactor;
@@ -100,6 +108,14 @@ public:
         currentUnmatchedFractionFactor = tmp;
     }
 
+    inline bool isLiteralProperForRefExtension(size_t seqLength, size_t litLength) {
+        return useLiteralsinReference() && litLength > REF_LITERAL_MINIMAL_LENGTH_EXT &&
+                (!usesCombinedRefExtensionStrategy() ||
+                        litLength > seqLength / MBGC_Params::dynamicUnmatchedFractionFactorLimit);
+
+    }
+#endif
+
     inline bool isContigProperForRefExtension(size_t seqLength, size_t unmatchedChars, int unmatchedFractionFactor) {
         return
 #ifdef DEVELOPER_BUILD
@@ -107,12 +123,6 @@ public:
             unmatchedChars > MINIMAL_UNMATCHED_LENGTH_FACTOR) &&
 #endif
             unmatchedChars > seqLength / unmatchedFractionFactor;
-    }
-
-    inline bool isLiteralProperForRefExtension(size_t seqLength, size_t litLength) {
-        return useLiteralsinReference() && litLength > REF_LITERAL_MINIMAL_LENGTH_EXT &&
-                (!usesCombinedRefExtensionStrategy() ||
-                        litLength > seqLength / MBGC_Params::dynamicUnmatchedFractionFactorLimit);
     }
 
     // HEADERS TEMPLATES PARAMS
@@ -129,10 +139,17 @@ public:
     bool skipMarginFixed = false;
     int referenceFactor = ADJUSTED_REFERENCE_FACTOR_FLAG;
     int referenceSlidingWindowFactor = DEFAULT_REFERENCE_SLIDING_WINDOW_FACTOR;
+    bool disable40bitReference = true;
 
     uint8_t coderLevel = CODER_LEVEL_NORMAL;
+    bool headerMaxCompression = false;
 
+    int64_t dnaLineLength = -1;
+    bool enableDNAformatting = false;
+
+    string inputFastaFileName;
     string seqListFileName;
+    bool singleFastaFileMode = false;
     string archiveFileName;
     string outputPath;
     string filterPattern;
@@ -144,8 +161,7 @@ public:
     bool validationMode = false;
     uint32_t validFilesCount = 0;
     uint32_t invalidFilesCount = 0;
-
-    bool disableDNAformatting = false;
+    bool concatHeadersAndSequencesMode = false;
 #endif
 
     void setBoostedReferenceFactorFlag() {
@@ -217,11 +233,28 @@ public:
     }
 
     void setSeqListFileName(const string &seqListFileName) {
+        if (singleFastaFileMode) {
+            fprintf(stderr, "ERROR: sequences list file used in single fasta file mode.\n\n");
+            exit(EXIT_FAILURE);
+        }
         MBGC_Params::seqListFileName = seqListFileName;
     }
 
+    void setInputFastaFileName(const string &inputFastaFileName) {
+        if (!seqListFileName.empty()) {
+            fprintf(stderr, "ERROR: sequences list file used in single fasta file mode.\n\n");
+            exit(EXIT_FAILURE);
+        }
+        if (bruteParallel) {
+            fprintf(stderr, "Brute parallel mode not supported in single fasta file mode.\n\n");
+            exit(EXIT_FAILURE);
+        }
+        singleFastaFileMode = true;
+        MBGC_Params::inputFastaFileName= inputFastaFileName;
+    }
+
     void setOutputPath(string outputPath) {
-        if (outputPath.size() && outputPath.back() != '/')
+        if (outputPath.size() && outputPath != STANDARD_IO_POSIX_ALIAS && outputPath.back() != '/')
             outputPath.push_back('/');
         MBGC_Params::outputPath = outputPath;
     }
@@ -230,24 +263,47 @@ public:
         MBGC_Params::filterPattern = filterPattern;
     }
 
+    void setDNALineLength(int dnaLineLength) {
+        if (dnaLineLength <= 0) {
+            fprintf(stderr, "l - dna line length - should be a positive integer.\n\n");
+            exit(EXIT_FAILURE);
+        }
+        MBGC_Params::dnaLineLength = dnaLineLength;
+        enableDNAformatting = true;
+    }
+
     void setSequentialMatchingMode() {
         sequentialMatching = true;
     }
 
     void setBruteParallelMode() {
+        if (singleFastaFileMode) {
+            fprintf(stderr, "Brute parallel mode not supported in single fasta file mode.\n\n");
+            exit(EXIT_FAILURE);
+        }
         bruteParallel = true;
     }
 
+    void enable40bitReference() {
+        disable40bitReference = false;
+    }
+
     void setCompressionLevel(int coderLevel) {
+#ifndef DEVELOPER_BUILD
+        if (coderLevel == CODER_LEVEL_FAST) {
+            fprintf(stderr, "Fast compression level not implemented yet :( (available only in developer build).\n");
+            exit(EXIT_FAILURE);
+        }
+#endif
         if (coderLevel > CODER_LEVEL_MAX || coderLevel < CODER_LEVEL_FAST) {
-            fprintf(stderr, "Generate quality coefficient should be between %d and %d.\n",
+            fprintf(stderr, "Compression level should be between %d and %d.\n",
                     CODER_LEVEL_FAST, CODER_LEVEL_MAX);
             exit(EXIT_FAILURE);
         }
         MBGC_Params::coderLevel = coderLevel;
         if (coderLevel == CODER_LEVEL_MAX) {
             setSequentialMatchingMode();
-            setBoostedReferenceFactorFlag();
+            enable40bitReference();
             if (!skipMarginFixed) {
                 MBGC_Params::skipMargin = MAX_MODE_SKIP_MARGIN;
             }
@@ -259,6 +315,9 @@ public:
         }
     }
 
+    void setHeaderMaxCompression() {
+        headerMaxCompression = true;
+    }
 };
 
 #endif //MBGC_MBGCPARAMS_H
