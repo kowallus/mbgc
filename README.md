@@ -12,7 +12,19 @@ The implementation:
 * supports standard input and output during (de)compression.
 
 ### Installation on Linux
-mbgc requires [libdeflate](https://github.com/ebiggers/libdeflate) library to work (an example
+
+#### bioconda repository
+
+*mbgc* is now available through bioconda repository. 
+Once conda manager is installed, run the following command to install *mbgc*:
+
+```bash
+conda install -c bioconda mbgc 
+```
+
+#### manual build
+
+*mbgc* requires [libdeflate](https://github.com/ebiggers/libdeflate) library to work (an example
 [install howto](https://pkgs.org/search/?q=libdeflate-dev) for Debian and Ubuntu).
 
 The following steps create an *mbgc* executable.
