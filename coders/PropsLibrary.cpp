@@ -9,7 +9,7 @@ LzmaCoderProps* getDefaulLzmaCoderProps(int coder_level, int dataPeriodCode = -1
     int noOfThreads = PgHelpers::numberOfThreads > 1 ? 2 : 1;
     switch(coder_level) {
         case CODER_LEVEL_FAST:
-            return new LzmaCoderProps(5, 1 << 24, 3, dataPeriodCode, dataPeriodCode, 32, -1, noOfThreads);
+            return new LzmaCoderProps(5, 1 << 24, 3, dataPeriodCode, dataPeriodCode, 6, -1, noOfThreads);
         case CODER_LEVEL_NORMAL:
             return new LzmaCoderProps(9, 3 << 29, 3, dataPeriodCode, dataPeriodCode, 128, -1, noOfThreads);
         case CODER_LEVEL_MAX:

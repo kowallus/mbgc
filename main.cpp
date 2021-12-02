@@ -6,47 +6,57 @@
 
 #include <omp.h>
 
-#define RELEASE_DATE "2021-10-22"
+#define RELEASE_DATE "2021-12-02"
 
 using namespace std;
 
-void printBasicUsage(string path) {
-    std::string base_filename = path.substr(path.find_last_of("/\\") + 1);
-    fprintf(stderr, "Usage for compression using files list as input: %s [-t noOfThreads] "
-                    "<sequencesListFile> <archiveFile>\n", base_filename.c_str());
-    fprintf(stderr, "Usage for single file compression: %s [-t noOfThreads] "
-                    "-i <inputFastaFile> <archiveFile>\n\n", base_filename.c_str());
-    fprintf(stderr, "Usage for decompression: %s -d [-t noOfThreads] [-f pattern] [-l dnaLineLength] "
-                    "<archiveFile> [<outputPath>]\n\n", base_filename.c_str());
-
-    fprintf(stderr, "-t number of threads used (default: %d)\n", MBGC_Params::DEFAULT_NO_OF_THREADS);
-    fprintf(stderr, "-d decompression mode\n"
-                    "-l format decompressed DNA (i.e., sets the number of bases per row)\n"
-                    "-f decompress files with names containing the given pattern\n\n");
-}
 
 void printVersion() {
-    fprintf(stderr, "MBGC %d.%d: Copyright (c) 20%c%c Szymon Grabowski, Tomasz Kowalski : %s\n\n",
+    fprintf(stderr, "Multiple Bacteria Genome Compressor (MBGC) v%d.%d.%d (c) Szymon Grabowski, Tomasz Kowalski, 20%c%c\n\n",
             (int) MBGC_Params::MBGC_VERSION_MAJOR, (int) MBGC_Params::MBGC_VERSION_MINOR,
-            RELEASE_DATE[2], RELEASE_DATE[3], RELEASE_DATE);
+            (int) MBGC_Params::MBGC_VERSION_REVISION, RELEASE_DATE[2], RELEASE_DATE[3]);
 }
 
-void printOptionDetails() {
-    fprintf(stderr, "<sequencesListFile> name of text file containing a list of FASTA files (raw or in gz archives)\n"
-                    "\t(given in separate lines) for compression\n"
-                    "<inputFastaFile> name of a FASTA file (raw or in gz archive) for compression\n"
-                    "\tfor standard input set <inputFastaFile> to %s\n"
-                    "<archiveFile> mbgc archive filename\n"
-                    "\tfor standard input (resp. output) in compression (resp. decompression) set <archiveFile> to %s\n"
-                    "<outputPath> extraction target path root (if skipped the root path is the current directory)\n"
-                    "\tfor standard output set <outputPath> to %s (all files are concatenated)\n\n",
-            MBGC_Params::STANDARD_IO_POSIX_ALIAS, MBGC_Params::STANDARD_IO_POSIX_ALIAS,
-            MBGC_Params::STANDARD_IO_POSIX_ALIAS);
+void printUsage(string base_toolname, bool details) {
+    printVersion();
+    fprintf(stderr, "Usage for multiple file compression (list of files given as input):\n\t%s [-c compressionMode]"
+                    " [-t noOfThreads] <sequencesListFile> <archiveFile>\n", base_toolname.c_str());
+    fprintf(stderr, "Usage for single file compression:\n\t%s [-c compressionMode] [-t noOfThreads]"
+                    " -i <inputFastaFile> <archiveFile>\n", base_toolname.c_str());
+    fprintf(stderr, "Usage for decompression:\n\t%s -d [-t noOfThreads] [-f pattern] [-l dnaLineLength]"
+                    " <archiveFile> [<outputPath>]\n\n", base_toolname.c_str());
+    if (details) {
+        fprintf(stderr,
+                "<sequencesListFile> name of text file containing a list of FASTA files (raw or in gz archives)\n"
+                "\t(given in separate lines) for compression\n"
+                "<inputFastaFile> name of a FASTA file (raw or in gz archive) for compression\n"
+                "\tfor standard input set <inputFastaFile> to %s\n"
+                "<archiveFile> mbgc archive filename\n"
+                "\tfor standard input (resp. output) in compression (resp. decompression) set <archiveFile> to %s\n"
+                "<outputPath> extraction target path root (if skipped the root path is the current directory)\n"
+                "\tfor standard output set <outputPath> to %s (all files are concatenated)\n\n",
+                MBGC_Params::STANDARD_IO_POSIX_ALIAS, MBGC_Params::STANDARD_IO_POSIX_ALIAS,
+                MBGC_Params::STANDARD_IO_POSIX_ALIAS);
+    }
+    fprintf(stderr, "Basic options:\n\t-c select compression mode (speed: 0; default: 1; repo: 2; max: 3)\n"
+                    "\t-d decompression mode\n"
+                    "\t-l format decompressed DNA (i.e., sets the number of bases per row)\n"
+                    "\t-f decompress files with names containing the given pattern\n"
+                    "\t-t number of threads used (default: %d)\n"
+                    "\t-h print full help and exit\n"
+                    "\t-v print version number and exit\n\n", MBGC_Params::DEFAULT_NO_OF_THREADS);
+    if (details) {
+        fprintf(stderr, "Compression modes description:\n"
+                        "\t(0) speed  - for speed (fast compression and decompression)\n"
+                        "\t(1) default - regular mode (fast compression and good ratio)\n"
+                        "\t(2) repo - for public repositories (better ratio and fast decompression)\n"
+                        "\t(3) max - for long-term storage (the best ratio)\n\n");
+    }
+}
 
+void printAdvancedDetails() {
     fprintf(stderr, "------------------ ADVANCED OPTIONS ----------------\n");
-    fprintf(stderr, "[-c compression level] (fast: 1; default: 2; max: 3)\n"
-            "[-v] print version number and exit\n"
-            "[-k matchingKmerLength] (24 <= k <= 40, default: 32)\n"
+    fprintf(stderr, "[-k matchingKmerLength] (24 <= k <= 40, default: 32)\n"
             "[-s referenceSamplingStep] (s > 0, default: 16)\n"
             "[-m skipMargin] (0 <= m <= 255, default: 16)\n"
             "[-o referenceFactorBinaryOrder] (0 <= o <= 12, auto-adjusted by default)\n"
@@ -74,9 +84,10 @@ void printDeveloperOptions() {
 #endif
 
 int main(int argc, char *argv[]) {
+    std::string path = argv[0];
+    std::string base_toolname = path.substr(path.find_last_of("/\\") + 1);
     if (argc == 1) {
-        printBasicUsage(argv[0]);
-        fprintf(stderr, "try '%s -?' for more information\n", argv[0]);
+        printUsage(base_toolname, false);
         exit(EXIT_SUCCESS);
     }
 
@@ -95,14 +106,14 @@ int main(int argc, char *argv[]) {
 #endif
 
 #ifdef DEVELOPER_BUILD
-    while ((opt = getopt(argc, argv, "c:i:t:f:k:s:m:o:u:w:l:pdrvbRLCBUHIDOV?")) != -1) {
+    while ((opt = getopt(argc, argv, "c:i:t:f:k:s:m:o:u:w:l:pdrvhbRLCBUHIDOV")) != -1) {
 #else
-    while ((opt = getopt(argc, argv, "c:i:t:f:k:s:m:o:u:w:l:pdrv?")) != -1) {
+    while ((opt = getopt(argc, argv, "c:i:t:f:k:s:m:o:u:w:l:pdrvh")) != -1) {
 #endif
         switch (opt) {
             case 'c':
                 encoderParamPresent = true;
-                params.setCompressionLevel(atoi(optarg));
+                params.setCompressionMode(atoi(optarg));
                 break;
             case 'd':
                 decoderParamPresent = true;
@@ -202,10 +213,9 @@ int main(int argc, char *argv[]) {
             case 'v':
                 versionFlag = true;
                 break;
-            case '?':
-                printVersion();
-                printBasicUsage(argv[0]);
-                printOptionDetails();
+            case 'h':
+                printUsage(base_toolname, true);
+                printAdvancedDetails();
 #ifdef DEVELOPER_BUILD
                 printDeveloperOptions();
 #endif
@@ -246,7 +256,7 @@ int main(int argc, char *argv[]) {
         cliError = true;
     }
     if (cliError) {
-        fprintf(stderr, "try '%s -?' for more information\n", argv[0]);
+        fprintf(stderr, "try '%s -h' for more information\n", base_toolname.c_str());
         exit(EXIT_FAILURE);
     }
     omp_set_num_threads(PgHelpers::numberOfThreads);

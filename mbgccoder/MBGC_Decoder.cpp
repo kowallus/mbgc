@@ -136,7 +136,8 @@ void MBGC_Decoder::initReference(const string &name) {
         PgHelpers::reverseComplement(refPtr, rcStart, refPtr + rcStart);
         refPos += rcStart;
     }
-    bool ok = moveToFile(name, outBuffer, 0);
+    if (filesCount == 1)
+        bool ok = moveToFile(name, outBuffer, 0);
 }
 
 void MBGC_Decoder::decodeReference(const string &name) {

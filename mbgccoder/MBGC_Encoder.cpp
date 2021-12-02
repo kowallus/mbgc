@@ -688,9 +688,11 @@ size_t MBGC_Encoder::prepareAndCompressStreams() {
     auto refExtFactorsProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX, 4);
     cJobs.emplace_back("unmatched fraction factors stream... ", unmatchedFractionFactors.data(),
                                    unmatchedFractionFactors.size(), refExtFactorsProps.get());
-    auto seqCoderProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX,
-                                              params->coderLevel == CODER_LEVEL_FAST ? 4 : 7);
-    int seqBlocksCount = params->coderLevel >= CODER_LEVEL_MAX ? 1 : 2;
+    auto seqCoderProps = params->fastDecoder ?
+            getDefaultCoderProps(LZMA_CODER, CODER_LEVEL_FAST, LZMA_DATAPERIODCODE_8_t)
+            : getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX,
+                                   params->coderLevel == CODER_LEVEL_FAST ? 4 : 7);
+    int seqBlocksCount = (params->coderLevel >= CODER_LEVEL_MAX ? 1 : 2) * (params->fastDecoder ? 2 : 1);
     ParallelBlocksCoderProps blockSeqCoderProps(seqBlocksCount, seqCoderProps.get());
     cJobs.emplace_back("reference and literals stream... ", targetLiterals[0], &blockSeqCoderProps);
     auto refLocksCoderProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX, 4);
@@ -703,8 +705,10 @@ size_t MBGC_Encoder::prepareAndCompressStreams() {
     auto nMapOff5thByteCoderProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX, 4);
     if (refFinalTotalLength > UINT32_MAX)
         cJobs.emplace_back("matches offsets 5th byte stream... ", mapOff5thByteStream, nMapOff5thByteCoderProps.get());
-    auto nMapLenCoderProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX,
-                                                  params->coderLevel == CODER_LEVEL_FAST? 3 : 6);
+    auto nMapLenCoderProps = params->fastDecoder ?
+                                getDefaultCoderProps(LZMA_CODER, CODER_LEVEL_FAST, LZMA_DATAPERIODCODE_16_t)
+                                : getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX,
+                                                       params->coderLevel == CODER_LEVEL_FAST? 3 : 6);
     int mapLenBlocksCount = (params->coderLevel >= CODER_LEVEL_MAX ?
             1 : (params->coderLevel == CODER_LEVEL_NORMAL ? 3 : 4));
     ParallelBlocksCoderProps blockNMapLenCoderProps(mapLenBlocksCount, nMapLenCoderProps.get());

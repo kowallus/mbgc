@@ -41,21 +41,33 @@ make mbgc
 ### Basic usage
 
 ```
-Usage for compression using files list as input: mbgc [-t noOfThreads] <sequencesListFile> <archiveFile>
-Usage for single file compression: mbgc [-t noOfThreads] -i <inputFastaFile> <archiveFile>
-
-Usage for decompression: mbgc -d [-t noOfThreads] [-f pattern] [-l dnaLineLength] <archiveFile> [<outputPath>]
-
--t number of threads used (default: 8)
--d decompression mode
--l format decompressed DNA (i.e., sets the number of bases per row)
--f decompress files with names containing the given pattern
+Usage for multiple file compression (list of files given as input):
+        mbgc [-c compressionMode] [-t noOfThreads] <sequencesListFile> <archiveFile>
+Usage for single file compression:
+        mbgc [-c compressionMode] [-t noOfThreads] -i <inputFastaFile> <archiveFile>
+Usage for decompression:
+        mbgc -d [-t noOfThreads] [-f pattern] [-l dnaLineLength] <archiveFile> [<outputPath>]
 
 <sequencesListFile> name of text file containing a list of FASTA files (raw or in gz archives)
         (given in separate lines) for compression
 <inputFastaFile> name of a FASTA file (raw or in gz archive) for compression
 <archiveFile> mbgc archive filename
 <outputPath> extraction target path root (if skipped the root path is the current directory)
+
+Basic options:
+        -c select compression mode (speed: 0; default: 1; repo: 2; max: 3)
+        -d decompression mode
+        -l format decompressed DNA (i.e., sets the number of bases per row)
+        -f decompress files with names containing the given pattern
+        -t number of threads used (default: 8)
+        -h print full help and exit
+        -v print version number and exit
+
+Compression modes description:
+        (0) speed  - for speed (fast compression and decompression)
+        (1) default - regular mode (fast compression and good ratio)
+        (2) repo - for public repositories (better ratio and fast decompression)
+        (3) max - for long-term storage (the best ratio)
 ```
 
 compression of FASTA files (raw or gzipped) listed in *seqlist.txt* file (one FASTA file per line):

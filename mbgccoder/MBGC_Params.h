@@ -11,7 +11,7 @@ public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 1;
     static const char MBGC_VERSION_MINOR = 2;
-    static const char MBGC_VERSION_REVISION = 0;
+    static const char MBGC_VERSION_REVISION = 1;
 
     static constexpr char *const MBGC_HEADER = (char*) "MBGC";
     static constexpr char *const TEMPORARY_FILE_SUFFIX = (char*) ".temp";
@@ -142,6 +142,7 @@ public:
     bool disable40bitReference = true;
 
     uint8_t coderLevel = CODER_LEVEL_NORMAL;
+    bool fastDecoder = false;
     bool headerMaxCompression = false;
 
     int64_t dnaLineLength = -1;
@@ -288,19 +289,14 @@ public:
         disable40bitReference = false;
     }
 
-    void setCompressionLevel(int coderLevel) {
-#ifndef DEVELOPER_BUILD
-        if (coderLevel == CODER_LEVEL_FAST) {
-            fprintf(stderr, "Fast compression level not implemented yet :( (available only in developer build).\n");
+    void setCompressionMode(int coderMode) {
+        if (coderMode > CODER_LEVEL_MAX || coderMode < 0) {
+            fprintf(stderr, "Compression mode should be between %d and %d.\n",
+                    0, CODER_LEVEL_MAX);
             exit(EXIT_FAILURE);
         }
-#endif
-        if (coderLevel > CODER_LEVEL_MAX || coderLevel < CODER_LEVEL_FAST) {
-            fprintf(stderr, "Compression level should be between %d and %d.\n",
-                    CODER_LEVEL_FAST, CODER_LEVEL_MAX);
-            exit(EXIT_FAILURE);
-        }
-        MBGC_Params::coderLevel = coderLevel;
+        coderLevel = (coderMode >= CODER_LEVEL_MAX ? CODER_LEVEL_MAX : coderMode + 1);
+        fastDecoder = !(coderMode & 1);
         if (coderLevel == CODER_LEVEL_MAX) {
             setSequentialMatchingMode();
             enable40bitReference();
