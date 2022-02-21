@@ -151,23 +151,21 @@ void SlidingWindowSparseEMMatcher::processIgnoreCollisionsRef(HashBuffer<MyUINT1
     #pragma omp parallel for
     for (int64_t i1 = samplingPos; i1 < (pos1 - K) - k1MULTI2; i1 += k1MULTI2) {
         uint32_t hashPositions[MULTI2];
-        const char* tempPointer = start1 + i1;
-        for (unsigned int temp = 0; temp < MULTI2; ++temp) {
-            hashPositions[temp] = hashFunc(tempPointer);
-            tempPointer += k1;
+        size_t i2 = i1;
+        for (unsigned int temp = 0; temp < MULTI2; ++temp, i2 += k1) {
+            hashPositions[temp] = hashFunc(start1 + htRePos(i2));
             _prefetch((char*)(sampledPositions + hashPositions[temp]), 1);
         }
 
-        int64_t i2 = i1;
+        i2 = i1;
         for (size_t temp = 0; temp < MULTI2; ++temp, i2 += k1) {
-            sampledPositions[hashPositions[temp]] = i2;
+            sampledPositions[hashPositions[temp]] = this->htEncodePos(i2);
         }
     }
-
     //////////////////// processing the end part of R
     int64_t i1;
-    for (i1 = REF_SHIFT + ((pos1 - K - 1) / k1MULTI2) * k1MULTI2; i1 < pos1 - K + 1; i1 += k1) {
-        sampledPositions[hashFunc(start1 + i1)] = i1;
+    for (i1 = k1 + ((pos1 - K - 1) / k1MULTI2) * k1MULTI2; i1 < pos1 - K + 1; i1 += k1) {
+        sampledPositions[hashFunc(start1 + htRePos(i1))] = this->htEncodePos(i1);
     }
     samplingPos = i1;
 }
@@ -185,7 +183,6 @@ void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTightTe
     processExactMatchQueryIgnoreCollisionsTight<MyUINT1, MyUINT2, true>(buffer, resMatches,
             start2, N2, destIsRef, revComplMatching, minMatchLength, matchingLockPos);
 }
-
 
 template<typename MyUINT1, typename MyUINT2, bool checkOverlaps>
 void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTight(HashBuffer<MyUINT1, MyUINT2> buffer,
@@ -218,7 +215,7 @@ void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTight(H
         if (sampledPositions[j] == 0)
             continue;
 
-        const char* curr1 = start1 + sampledPositions[j];
+        const char* curr1 = start1 + this->htDecodePos(sampledPositions[j]);
         const char* swStart = start1 + pos1;
         const char* swStop = start1 + (matchingLockPos != SW_END_ERASED_FLAG ? matchingLockPos : pos1);
         bool matchBeforeSwStart = curr1 < swStart;
@@ -302,16 +299,18 @@ void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTight(H
         }
     }
     //////////////////// processing the end part of Q  //////////////////////
-
 //    *v1logger << "Character extensions = " << charExtensions <<  "\n";
 }
 
 using namespace std;
 
 SlidingWindowSparseEMMatcher::SlidingWindowSparseEMMatcher(const size_t refLengthLimit, const uint32_t targetMatchLength,
-                                                           int _k1, int _k2, int skipMargin, uint32_t minMatchLength)
+                                                           int _k1, int _k2, int skipMargin, uint32_t minMatchLength,
+                                                           bool skipHtInit)
     : maxRefLength(refLengthLimit), L(targetMatchLength), skipMargin(skipMargin) {
-    start1 = new char[this->maxRefLength];
+    size_t allocSize = PgHelpers::safeNewArrayAlloc(start1, this->maxRefLength, false, TOTAL_RAM_REF_LIMIT_PERCENT);
+    if (this->maxRefLength != allocSize)
+        this->maxRefLength = allocSize;
     start1[0] = 0;
     pos1 = REF_SHIFT;
     swEnd = this->maxRefLength;
@@ -321,19 +320,21 @@ SlidingWindowSparseEMMatcher::SlidingWindowSparseEMMatcher(const size_t refLengt
     if (minMatchLength > targetMatchLength)
         minMatchLength = targetMatchLength;
     initParams(minMatchLength, _k1, _k2);
-    displayParams();
-    if (refLengthLimit / k1 >= (1ULL << 32)) {
-        bigRef = 2;  // huge Reference
-        buffer2.first = new uint64_t[hash_size]();
-        *v1logger  << "WARNING - LARGE reference file (SIZE / k1 > 4GB), 64-bit arrays\n";
-    } else if (refLengthLimit >= (1ULL << 32)) {
+    if (skipHtInit)
+        return;
+    if (refLengthLimit >= (1ULL << 32)) {
         bigRef = 1;  // large Reference
-        buffer1.first = new uint64_t[hash_size]();
+        allocSize = PgHelpers::safeNewArrayAlloc<uint64_t>(buffer1.first, hash_size, true);
         *v1logger << "WARNING - BIG reference file (>4GB), 64-bit arrays\n";
     } else {
         bigRef = 0;  // small Reference
-        buffer0.first = new uint32_t[hash_size]();
+        allocSize = PgHelpers::safeNewArrayAlloc<uint32_t>(buffer0.first, hash_size, true);
     }
+    if (hash_size != allocSize) {
+        hash_size = allocSize;
+        hash_size_minus_one = hash_size - 1;
+    }
+    displayParams();
 }
 
 size_t SlidingWindowSparseEMMatcher::acquireWorkerMatchingLockPos() {
@@ -392,9 +393,7 @@ void SlidingWindowSparseEMMatcher::loadRef(const char *refText, size_t refLength
     }
     A_memcpy(start1 + pos1, refText, tmpLength);
     pos1 += tmpLength;
-    if (bigRef == 2) {
-        processIgnoreCollisionsRef<std::uint64_t, std::uint64_t>(buffer2);
-    } else if (bigRef == 1) {
+    if (bigRef == 1) {
         processIgnoreCollisionsRef<std::uint64_t, std::uint32_t>(buffer1);
     } else {
         processIgnoreCollisionsRef<uint32_t, uint32_t>(buffer0);
@@ -445,3 +444,43 @@ SlidingWindowSparseEMMatcher::matchTexts(vector<TextMatch> &resMatches, const ch
                   destText, destLen, destIsRef, revComplMatching, minMatchLength, matchingLockPos);
     }
 }
+
+SlidingWindowExpSparseEMMatcher::SlidingWindowExpSparseEMMatcher(const size_t refLengthLimit,
+                                                                 const uint32_t targetMatchLength, int _k1, int _k2,
+                                                                 int skipMargin, uint32_t minMatchLength) : SlidingWindowSparseEMMatcher(
+        refLengthLimit, targetMatchLength, _k1, _k2, skipMargin, minMatchLength, true),
+        k1ord(__builtin_ctz((uint32_t) _k1)) {
+    if (_k1 % 2) {
+        fprintf(stderr, "Error initializing ExpSparseMEM: incorrect k1 (%d)\n\n", _k1);
+        exit(EXIT_FAILURE);
+    }
+    this->samplingPos = _k1;
+    size_t allocSize;
+    if (this->htEncodePos(refLengthLimit) >= (1ULL << 32)) {
+        bigRef = 1;  // large Reference
+        allocSize = PgHelpers::safeNewArrayAlloc<uint64_t>(buffer1.first, hash_size, true);
+        *v1logger << "WARNING - LARGE reference file (SIZE / k1 > 4GB), 64-bit arrays\n";
+    } else {
+        bigRef = 0;  // small Reference
+        allocSize = PgHelpers::safeNewArrayAlloc<uint32_t>(buffer0.first, hash_size, true);
+    }
+    if (hash_size != allocSize) {
+        hash_size = allocSize;
+        hash_size_minus_one = hash_size - 1;
+    }
+    SlidingWindowSparseEMMatcher::displayParams();
+    *PgHelpers::appout << "Exponential mode: ";
+    *PgHelpers::appout << "k1 order = " << k1ord << std::endl;
+}
+
+SlidingWindowExpRandSparseEMMatcher::SlidingWindowExpRandSparseEMMatcher(const size_t refLengthLimit,
+                                                                 const uint32_t targetMatchLength, int _k1, int _k2,
+                                                                 int skipMargin, uint32_t minMatchLength) : SlidingWindowExpSparseEMMatcher(
+        refLengthLimit, targetMatchLength, _k1, _k2, skipMargin, minMatchLength) {
+    if (_k1 < __builtin_popcount(POPCOUNT_MASK)) {
+        fprintf(stderr, "Error initializing RandExpSparseMEM: Too small k1 (%d < %d)\n\n", _k1, __builtin_popcount(POPCOUNT_MASK));
+        exit(EXIT_FAILURE);
+    }
+    *PgHelpers::appout << "Randomized mode!" << std::endl;
+}
+

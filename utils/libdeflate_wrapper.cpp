@@ -27,11 +27,14 @@ gzFile gzopen(const char *filename) {
         }
         size = i;
     } else {
-        FILE *f = fopen(filename, "r");
+        FILE *f = fopen(filename, "rb");
         if (f == NULL) {
+#ifndef NO_GZ_SUPPORT
             string tmpname = filename + string(".gz");
-            f = fopen(tmpname.c_str(), "r");
-            if (f == NULL) {
+            f = fopen(tmpname.c_str(), "rb");
+            if (f == NULL)
+#endif
+            {
                 fprintf(stderr, "Cannot open file: %s\n", filename);
                 exit(EXIT_FAILURE);
             }
@@ -47,7 +50,7 @@ gzFile gzopen(const char *filename) {
         }
         fclose(f);
     }
-
+#ifndef NO_GZ_SUPPORT
     if (in[0] == GZIP_ID1 && in[1] == GZIP_ID2) {
         size_t uncompressed_size = load_u32_gzip(&in[size - 4]);
         if (uncompressed_size == 0)
@@ -67,7 +70,9 @@ gzFile gzopen(const char *filename) {
         }
         free(in);
         libdeflate_free_decompressor(d);
-    } else { //input is not compressed?
+    } else
+#endif
+    { //input is not compressed?
         gzf.out = in;
         gzf.size = size;
     }

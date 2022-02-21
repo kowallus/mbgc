@@ -6,19 +6,24 @@
 
 #include <omp.h>
 
-#define RELEASE_DATE "2021-12-02"
+#define RELEASE_DATE "22-02-2022"
 
 using namespace std;
 
 
 void printVersion() {
-    fprintf(stderr, "Multiple Bacteria Genome Compressor (MBGC) v%d.%d.%d (c) Szymon Grabowski, Tomasz Kowalski, 20%c%c\n\n",
+    fprintf(stderr, "Multiple Bacteria Genome Compressor (MBGC) v%d.%d.%dPE (c) Szymon Grabowski, Tomasz Kowalski, 20%c%c\n",
             (int) MBGC_Params::MBGC_VERSION_MAJOR, (int) MBGC_Params::MBGC_VERSION_MINOR,
-            (int) MBGC_Params::MBGC_VERSION_REVISION, RELEASE_DATE[2], RELEASE_DATE[3]);
+            (int) MBGC_Params::MBGC_VERSION_REVISION, RELEASE_DATE[8], RELEASE_DATE[9]);
+#ifdef NO_GZ_SUPPORT
+    fprintf(stderr, "*the build doesn't support input from gz archives\n\n");
+#endif
+    fprintf(stderr, "\n");
 }
 
 void printUsage(string base_toolname, bool details) {
     printVersion();
+
     fprintf(stderr, "Usage for multiple file compression (list of files given as input):\n\t%s [-c compressionMode]"
                     " [-t noOfThreads] <sequencesListFile> <archiveFile>\n", base_toolname.c_str());
     fprintf(stderr, "Usage for single file compression:\n\t%s [-c compressionMode] [-t noOfThreads]"
@@ -29,7 +34,11 @@ void printUsage(string base_toolname, bool details) {
         fprintf(stderr,
                 "<sequencesListFile> name of text file containing a list of FASTA files (raw or in gz archives)\n"
                 "\t(given in separate lines) for compression\n"
+#ifndef NO_GZ_SUPPORT
                 "<inputFastaFile> name of a FASTA file (raw or in gz archive) for compression\n"
+#else
+                "<inputFastaFile> name of a FASTA file (only raw) for compression\n"
+#endif
                 "\tfor standard input set <inputFastaFile> to %s\n"
                 "<archiveFile> mbgc archive filename\n"
                 "\tfor standard input (resp. output) in compression (resp. decompression) set <archiveFile> to %s\n"
@@ -62,7 +71,7 @@ void printAdvancedDetails() {
             "[-o referenceFactorBinaryOrder] (0 <= o <= 12, auto-adjusted by default)\n"
             "[-u unmatchedFractionFactor] (1 <= u <= 255, default: 192)\n"
             "[-w referenceSlidingWindowFactor] (2 <= w <= 255, default: 16)\n"
-            "[-r] enable reference buffer size up to 2^40 bytes\n"
+            "[-r] limit reference buffer size up to 2^32 bytes\n"
             "[-p] disable matching parallelization (except for I/O and backend compression)\n\n");
 }
 
@@ -71,7 +80,7 @@ void printDeveloperOptions() {
     fprintf(stderr, "------------------ DEVELOPER OPTIONS ----------------\n");
     fprintf(stderr, "[-b] brute parallel encoding mode (without producer-consumer approach)\n");
     fprintf(stderr, "[-R] no reverse-compliments in reference\n");
-    fprintf(stderr, "[-H] stronger backend compression of headers (slow)\n");
+    fprintf(stderr, "[-S] stronger backend compression (slow)\n");
     fprintf(stderr, "[-L] literals ref extension strategy (experimental - only for encoding)\n");
     fprintf(stderr, "[-C] combined ref extension strategy\n");
     fprintf(stderr, "[-B] split contigs into blocks (experimental - only for encoding)\n");
@@ -106,7 +115,7 @@ int main(int argc, char *argv[]) {
 #endif
 
 #ifdef DEVELOPER_BUILD
-    while ((opt = getopt(argc, argv, "c:i:t:f:k:s:m:o:u:w:l:pdrvhbRLCBUHIDOV")) != -1) {
+    while ((opt = getopt(argc, argv, "c:i:t:f:k:s:m:o:u:w:l:pdrvhbRLCBUSIDOV")) != -1) {
 #else
     while ((opt = getopt(argc, argv, "c:i:t:f:k:s:m:o:u:w:l:pdrvh")) != -1) {
 #endif
@@ -153,7 +162,7 @@ int main(int argc, char *argv[]) {
                 break;
             case 'r':
                 encoderParamPresent = true;
-                params.enable40bitReference();
+                params.limit32bitReference();
                 break;
             case 'u':
                 encoderParamPresent = true;
@@ -192,9 +201,9 @@ int main(int argc, char *argv[]) {
                 encoderParamPresent = true;
                 params.refExtensionStrategy |= MBGC_Params::DYNAMIC_REF_EXT_FACTOR_MASK;
                 break;
-            case 'H':
+            case 'S':
                 encoderParamPresent = true;
-                params.setHeaderMaxCompression();
+                params.setUltraStreamsCompression();
                 break;
             case 'I':
                 encoderParamPresent = true;

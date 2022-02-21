@@ -11,7 +11,7 @@ public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 1;
     static const char MBGC_VERSION_MINOR = 2;
-    static const char MBGC_VERSION_REVISION = 1;
+    static const char MBGC_VERSION_REVISION = 2;
 
     static constexpr char *const MBGC_HEADER = (char*) "MBGC";
     static constexpr char *const TEMPORARY_FILE_SUFFIX = (char*) ".temp";
@@ -30,7 +30,6 @@ public:
     static const char FILE_SEPARATOR_MARK = ';' + 128;
 
     static const int ADJUSTED_REFERENCE_FACTOR_FLAG = -1;
-    static const int BOOSTED_ADJUSTED_REFERENCE_FACTOR_FLAG = -2;
 
     static const int DEFAULT_KMER_LENGTH = 32;
 
@@ -42,10 +41,14 @@ public:
 
     static const int DEFAULT_REFERENCE_SLIDING_WINDOW_FACTOR = 16;
 
+    static const int DEFAULT_BIG_REFERENCE_COMPRESSOR_RATIO = 16;
+    static const int MAX_BIG_REFERENCE_COMPRESSOR_RATIO = 4;
+
     static const int DEFAULT_UNMATCHED_LENGTH_FACTOR = 192;
     static const int MINIMAL_UNMATCHED_LENGTH_FACTOR = 128;
 
     static const size_t MIN_REF_INIT_SIZE = 1 << 21;
+    static const size_t AVG_REF_INIT_SIZE = 1 << 23;
     static const size_t SEQ_BLOCK_SIZE = 1 << 17;
 
     static const uint8_t FRACTION_REF_EXTENSION_STRATEGY = 0;
@@ -139,11 +142,12 @@ public:
     bool skipMarginFixed = false;
     int referenceFactor = ADJUSTED_REFERENCE_FACTOR_FLAG;
     int referenceSlidingWindowFactor = DEFAULT_REFERENCE_SLIDING_WINDOW_FACTOR;
-    bool disable40bitReference = true;
+    bool enable40bitReference = true;
+    uint8_t bigReferenceCompressorRatio = DEFAULT_BIG_REFERENCE_COMPRESSOR_RATIO;
 
     uint8_t coderLevel = CODER_LEVEL_NORMAL;
     bool fastDecoder = false;
-    bool headerMaxCompression = false;
+    bool ultraStreamsCompression = false;
 
     int64_t dnaLineLength = -1;
     bool enableDNAformatting = false;
@@ -164,15 +168,6 @@ public:
     uint32_t invalidFilesCount = 0;
     bool concatHeadersAndSequencesMode = false;
 #endif
-
-    void setBoostedReferenceFactorFlag() {
-        if (referenceFactor != ADJUSTED_REFERENCE_FACTOR_FLAG) {
-            fprintf(stderr, "Boosting reference factor flag doesn't work with o flag "
-                            "(i.e., reference factor binary order).\n\n");
-            exit(EXIT_FAILURE);
-        }
-        referenceFactor = BOOSTED_ADJUSTED_REFERENCE_FACTOR_FLAG;
-    }
 
     void setInterleaveFileOrder() {
         interleaveFileOrder = true;
@@ -210,6 +205,7 @@ public:
             exit(EXIT_FAILURE);
         }
         MBGC_Params::referenceFactor = ((size_t) 1) << o;
+        MBGC_Params::bigReferenceCompressorRatio = false;
     }
 
     void setUnmatchedFractionFactor(int u) {
@@ -285,8 +281,8 @@ public:
         bruteParallel = true;
     }
 
-    void enable40bitReference() {
-        disable40bitReference = false;
+    void limit32bitReference() {
+        enable40bitReference = false;
     }
 
     void setCompressionMode(int coderMode) {
@@ -299,7 +295,7 @@ public:
         fastDecoder = !(coderMode & 1);
         if (coderLevel == CODER_LEVEL_MAX) {
             setSequentialMatchingMode();
-            enable40bitReference();
+            MBGC_Params::bigReferenceCompressorRatio = MAX_BIG_REFERENCE_COMPRESSOR_RATIO;
             if (!skipMarginFixed) {
                 MBGC_Params::skipMargin = MAX_MODE_SKIP_MARGIN;
             }
@@ -311,8 +307,8 @@ public:
         }
     }
 
-    void setHeaderMaxCompression() {
-        headerMaxCompression = true;
+    void setUltraStreamsCompression() {
+        ultraStreamsCompression = true;
     }
 };
 

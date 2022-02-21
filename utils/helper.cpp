@@ -3,6 +3,13 @@
 #include "byteswap.h"
 #include <sys/stat.h>
 
+#ifdef __MINGW32__
+#include <sysinfoapi.h>
+#else
+#include <unistd.h>
+#endif
+
+
 int PgHelpers::numberOfThreads = 8;
 
 std::ostream *PgHelpers::appout = &std::cout;
@@ -49,7 +56,11 @@ unsigned long long int PgHelpers::time_millis() {
 void PgHelpers::createFolders(string pathToFile) {
     size_t pos = 0;
     while ((pos = pathToFile.find('/', pos)) != std::string::npos) {
+#ifdef __MINGW32__
+        mkdir(pathToFile.substr(0, pos++).c_str());
+#else
         mkdir(pathToFile.substr(0, pos++).c_str(), 0777);
+#endif
     }
 }
 
@@ -478,4 +489,18 @@ int PgHelpers::strcmplcp(const char* lStrPtr, const char* rStrPtr, int length) {
 
     return 0;
 
+}
+
+unsigned long long PgHelpers::getTotalSystemMemory()
+{
+#ifdef __MINGW32__
+    MEMORYSTATUSEX status;
+    status.dwLength = sizeof(status);
+    GlobalMemoryStatusEx(&status);
+    return status.ullTotalPhys;
+#else
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long page_size = sysconf(_SC_PAGE_SIZE);
+    return pages * page_size;
+#endif
 }

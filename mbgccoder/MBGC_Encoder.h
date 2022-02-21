@@ -79,7 +79,8 @@ private:
     int readingThreadsCount;
     vector<uint32_t> out, in;
     void readFilesParallelTask(int thread_no);
-    static const int READING_BUFFER_SIZE = 32;
+    static const int DEFAULT_READING_BUFFER_SIZE = 16;
+    int readingBufferSize = DEFAULT_READING_BUFFER_SIZE;
 
     void interleaveOrderOfFiles();
     void loadFileNames();

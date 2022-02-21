@@ -2,7 +2,10 @@
 #define MBGC_LIBDEFLATE_WRAPPER_H
 
 #include "helper.h"
+
+#ifndef NO_GZ_SUPPORT
 #include <libdeflate.h>
+#endif
 
 
 struct gzFile {

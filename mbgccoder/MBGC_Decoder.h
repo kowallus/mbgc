@@ -42,7 +42,8 @@ private:
 
     istringstream mapOffSrc, mapOff5thByteSrc, mapLenSrc, seqsCountSrc, matchingLocksPosSrc;
 
-    bool decompressFromStdin();
+    bool isStdinMode();
+    bool isStdoutMode();
 
     void writeDNA(const char *sequence, int64_t length);
     void decodeHeader(string& headerTemplate);
@@ -56,10 +57,11 @@ private:
 
     void writeFilesParallelTask(int thread_no);
     void extractFilesParallel();
-    static const int WRITING_BUFFER_SIZE = 32;
+    static const int DEFAULT_WRITING_BUFFER_SIZE = 16;
+    int64_t writingBufferSize = DEFAULT_WRITING_BUFFER_SIZE;
     vector<vector<string>> contentsBuf;
     vector<vector<string>> namesBuf;
-    vector<uint8_t> in, out;
+    vector<uint32_t> in, out;
     vector<uint32_t> extractedFilesCount;
     bool isDecoding;
 

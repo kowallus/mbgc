@@ -7,6 +7,10 @@
 #include <omp.h>
 #include <numeric>
 
+#ifdef __MINGW32__
+#include <fcntl.h>
+#endif
+
 #ifdef DEVELOPER_BUILD
 #include "../utils/libdeflate_wrapper.h"
 #endif
@@ -65,6 +69,7 @@ bool MBGC_Decoder::moveToFile(const string& filename, string& src, const int thr
         return true;
     }
     string filepath = params->outputPath + filename;
+    std::replace(filepath.begin(), filepath.end(), '\\', '/');
 #ifdef DEVELOPER_BUILD
     if (params->validationMode) {
         if (filesCount == 1 && unmatchedFractionFactors.size() > 1) {
@@ -321,8 +326,8 @@ void MBGC_Decoder::writeFilesParallelTask(const int thread_no) {
 #endif
     while(isDecoding || in[thread_no] != out[thread_no] ){
         if (in[thread_no] != out[thread_no]) {
-            string &content = contentsBuf[thread_no][out[thread_no]];
-            string &name = namesBuf[thread_no][out[thread_no]];
+            string &content = contentsBuf[thread_no][out[thread_no] % writingBufferSize];
+            string &name = namesBuf[thread_no][out[thread_no] % writingBufferSize];
             bool ok = moveToFile(name, content, thread_no);
 #ifdef DEVELOPER_BUILD
             if (ok)
@@ -330,7 +335,7 @@ void MBGC_Decoder::writeFilesParallelTask(const int thread_no) {
             else
                 invalidFilesCount++;
 #endif
-            out[thread_no] = (out[thread_no] + 1) % WRITING_BUFFER_SIZE;
+            out[thread_no] += 1;
         } else {
             nanosleep((const struct timespec[]){{0, 1000L}}, NULL);
         }
@@ -355,8 +360,8 @@ void MBGC_Decoder::extractFilesParallel() {
             extractedFilesCount.resize(writingThreadsCount, 0);
             in.resize(writingThreadsCount, 0);
             out.resize(writingThreadsCount, 0);
-            namesBuf.resize(writingThreadsCount, vector<string>(WRITING_BUFFER_SIZE));
-            contentsBuf.resize(writingThreadsCount, vector<string>(WRITING_BUFFER_SIZE));
+            namesBuf.resize(writingThreadsCount, vector<string>(writingBufferSize));
+            contentsBuf.resize(writingThreadsCount, vector<string>(writingBufferSize));
             for (int i = 0; i < writingThreadsCount; i++) {
 #pragma omp task
                 {
@@ -367,15 +372,15 @@ void MBGC_Decoder::extractFilesParallel() {
             size_t endGuard = namesStr.rfind(params->filterPattern);
             if (endGuard >= namesPos && endGuard != std::string::npos) {
                 while ((tmp = namesStr.find(MBGC_Params::FILE_SEPARATOR_MARK, namesPos)) != std::string::npos) {
-                    while (((in[thread_no] + 1) % WRITING_BUFFER_SIZE) == out[thread_no])
+                    while (in[thread_no] == out[thread_no] + writingBufferSize)
                         nanosleep((const struct timespec[]) {{0, 100L}}, NULL);
-                    namesBuf[thread_no][in[thread_no]] = namesStr.substr(namesPos, tmp - namesPos);
+                    namesBuf[thread_no][in[thread_no] % writingBufferSize] = namesStr.substr(namesPos, tmp - namesPos);
                     namesPos = tmp + 1;
-                    outBuffer = std::move(contentsBuf[thread_no][in[thread_no]]);
+                    outBuffer = std::move(contentsBuf[thread_no][in[thread_no] % writingBufferSize]);
                     outBuffer.reserve(largestFileLength);
                     decodeFile(unmatchedFractionFactors[fileIdx++]);
-                    contentsBuf[thread_no][in[thread_no]] = std::move(outBuffer);
-                    in[thread_no] = (in[thread_no] + 1) % WRITING_BUFFER_SIZE;
+                    contentsBuf[thread_no][in[thread_no] % writingBufferSize] = std::move(outBuffer);
+                    in[thread_no] += 1;
                     thread_no = (thread_no + 1) % writingThreadsCount;
                     if (tmp > endGuard)
                         break;
@@ -387,11 +392,23 @@ void MBGC_Decoder::extractFilesParallel() {
 }
 
 void MBGC_Decoder::decode() {
+#ifdef __MINGW32__
+    if (isStdoutMode()) {
+        if (_setmode(_fileno(stdout), _O_BINARY) == -1)
+            fprintf(stderr, "WARNING: switching cout to binary mode failed (errCode: %d)\n", strerror(errno));
+    }
+#endif
     istream* in;
-    if (decompressFromStdin())
+    if (isStdinMode()) {
+#ifdef __MINGW32__
+        if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
+            fprintf(stderr, "ERROR: switching cin to binary mode (errCode: %d)\n", strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+#endif
         in = &cin;
-    else {
-        in = new fstream(params->archiveFileName);
+    } else {
+        in = new fstream(params->archiveFileName, ios_base::in | ios_base::binary);
         if (!*in) {
             fprintf(stderr, "Cannot open archive %s\n", params->archiveFileName.c_str());
             exit(EXIT_FAILURE);
@@ -425,7 +442,7 @@ void MBGC_Decoder::decode() {
     mapOff5thByteSrc.str(mapOff5thByteStream);
     mapLenSrc.str(mapLenStream);
     matchingLocksPosSrc.str(matchingLocksPosStream);
-    if (!decompressFromStdin())
+    if (!isStdinMode())
         delete(in);
     *PgHelpers::appout << "loaded archive - " << PgHelpers::time_millis() << " [ms]" << endl;
     size_t tmp;
@@ -476,6 +493,12 @@ void MBGC_Decoder::readParamsAndStats(istream &in) {
     mbgcVersionMajor = in.get();
     mbgcVersionMinor = in.get();
     mbgcVersionRevision = in.get();
+    if (mbgcVersionMajor > MBGC_Params::MBGC_VERSION_MAJOR ||
+        (mbgcVersionMajor == MBGC_Params::MBGC_VERSION_MAJOR && mbgcVersionMinor > MBGC_Params::MBGC_VERSION_MINOR)) {
+        fprintf(stderr, "Exiting. Unsupported newer version of MBGC archive (%d.%d.%d)\n", (int) mbgcVersionMajor, (int) mbgcVersionMinor,
+                (int) mbgcVersionRevision);
+        exit(EXIT_FAILURE);
+    }
     ch = in.get(); // numberOfThreads
     params->coderLevel = in.get();
     params->sequentialMatching = (bool) in.get();
@@ -517,9 +540,14 @@ void MBGC_Decoder::readParamsAndStats(istream &in) {
         PgHelpers::readValue<uint32_t>(in, tmp, false);
         refTotalLength = tmp;
     }
-
+    if (largestFileLength > params->AVG_REF_INIT_SIZE)
+        writingBufferSize = 1 + writingBufferSize * params->AVG_REF_INIT_SIZE / largestFileLength;
 }
 
-bool MBGC_Decoder::decompressFromStdin() {
+bool MBGC_Decoder::isStdinMode() {
     return params->archiveFileName == MBGC_Params::STANDARD_IO_POSIX_ALIAS;
+}
+
+bool MBGC_Decoder::isStdoutMode() {
+    return params->outputPath == MBGC_Params::STANDARD_IO_POSIX_ALIAS;
 }

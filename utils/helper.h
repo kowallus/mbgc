@@ -262,6 +262,27 @@ namespace PgHelpers {
         }
     };
 
+    // memory management routines
+
+    unsigned long long getTotalSystemMemory();
+
+    template<typename t_arr>
+    size_t safeNewArrayAlloc(t_arr *&arr, size_t allocSize, bool zerofill, uint8_t totalLimitPercent = UINT8_MAX) {
+        size_t totalRAM = getTotalSystemMemory();
+        if (totalLimitPercent != UINT8_MAX && allocSize * sizeof(t_arr) > totalRAM * totalLimitPercent / 100)
+            allocSize = (totalRAM * totalLimitPercent / 100) / sizeof(t_arr);
+        bool success = false;
+        do {
+            try {
+                arr = zerofill ? new t_arr[allocSize]() : new t_arr[allocSize];
+                success = true;
+            } catch (const std::bad_alloc& e) {
+                allocSize /= 2;
+            }
+        } while (!success);
+        return allocSize;
+    }
+
 }
 
 #endif // HELPER_H_INCLUDED

@@ -101,8 +101,8 @@ void MBGC_Encoder::loadRef(string& refName) {
     targetLiterals.resize(1);
     fileHeaders.push_back("");
     fileHeadersTemplates.push_back("");
-
-    while (kseq_read(seq) >= 0) {
+    int kseq_status = 0;
+    while ((kseq_status = kseq_read(seq)) >= 0) {
         largestContigSize = seq->seq.l > largestContigSize ? seq->seq.l : largestContigSize;
         refStr.append(seq->seq.s, seq->seq.l);
         targetLiterals[0].append(seq->seq.s, seq->seq.l);
@@ -112,6 +112,10 @@ void MBGC_Encoder::loadRef(string& refName) {
             break;
         processHeader(0, header);
         seqCounter++;
+    }
+    if (kseq_status <= -2) {
+        fprintf(stderr, "Error parsing file %s (errCode: %d) - expected FASTA format\n", refName.c_str(), kseq_status);
+        exit(EXIT_FAILURE);
     }
     rcStart = refStr.size();
     *PgHelpers::devout << "loaded reference - " << PgHelpers::time_millis() << " [ms]" << endl;
@@ -127,20 +131,25 @@ void MBGC_Encoder::loadRef(string& refName) {
             (((int64_t) refFp.fileSize) - 1) / ((int64_t) basicRefLength / 2) + 1 : filesCount;
     targetsCount = elementsCount - (params->sequentialMatching ? 0 : 1);
     if (params->referenceFactor < 1) {
-        int tmp = 15 - (__builtin_clz(elementsCount) / 3) +
-                (params->referenceFactor == MBGC_Params::BOOSTED_ADJUSTED_REFERENCE_FACTOR_FLAG ? 1 : 0);
+        int tmp = 15 - (__builtin_clz(elementsCount) / 3);
         tmp = tmp < 5 ? 5 : (tmp > 12 ? 12 : tmp);
         params->referenceFactor = (size_t) 1 << tmp;
     }
     size_t refLengthLimit = params->referenceFactor * basicRefLength;
     if (refLengthLimit <= UINT32_MAX)
-        params->disable40bitReference = true;
-    else if (params->disable40bitReference)
+        params->enable40bitReference = false;
+    else if (!params->enable40bitReference)
         refLengthLimit = UINT32_MAX;
     else if (refLengthLimit > MBGC_Params::REFERENCE_LENGTH_LIMIT)
         refLengthLimit = MBGC_Params::REFERENCE_LENGTH_LIMIT;
+    if (refLengthLimit > UINT32_MAX)
+        refLengthLimit = UINT32_MAX + (refLengthLimit - UINT32_MAX) / params->bigReferenceCompressorRatio;
 
-    matcher = new SlidingWindowSparseEMMatcher(refLengthLimit, params->k, params->k1, params->k2,
+    if (__builtin_ctz((uint32_t) params->k1))
+        matcher = new SlidingWindowExpSparseEMMatcher(refLengthLimit, params->k, params->k1, params->k2,
+                                                          params->skipMargin);
+    else
+        matcher = new SlidingWindowSparseEMMatcher(refLengthLimit, params->k, params->k1, params->k2,
                                                params->skipMargin);
     if (params->sequentialMatching)
         matcher->disableSlidingWindow();
@@ -153,6 +162,8 @@ void MBGC_Encoder::loadRef(string& refName) {
         if (!params->singleFastaFileMode)
             gzclose(refFp);
     }
+    if (basicRefLength > params->AVG_REF_INIT_SIZE * 2)
+        readingBufferSize = 1 + readingBufferSize * params->AVG_REF_INIT_SIZE * 2 / basicRefLength;
     *PgHelpers::devout << "initial sparseEM reference length: " << matcher->getRefLength() << endl;
 #ifdef DEVELOPER_BUILD
     currentRefExtGoal = rcStart * MBGC_Params::INITIAL_REF_EXT_GOAL_FACTOR;
@@ -223,7 +234,7 @@ size_t MBGC_Encoder::processMatches(vector<PgTools::TextMatch>& textMatches, cha
         unmatchedChars += length;
         targetLiterals[i].push_back(MBGC_Params::MATCH_MARK);
         PgHelpers::writeValue<uint32_t>(targetMapOffDests[i], match.posSrcText);
-        if (!params->disable40bitReference)
+        if (params->enable40bitReference)
             PgHelpers::writeValue<uint8_t>(targetMapOff5thByteDests[i], match.posSrcText >> 32);
         PgHelpers::writeUIntWordFrugal(targetMapLenDests[i], match.length);
         pos = match.endPosDestText();
@@ -313,7 +324,8 @@ void MBGC_Encoder::encodeTargetsWithParallelIO() {
             unmatchedFractionFactors.push_back(params->currentUnmatchedFractionFactor);
             totalFilesLength += fp.size;
             largestFileLength = fp.size > largestFileLength ? fp.size : largestFileLength;
-            while ((l = kseq_read(seq)) >= 0) {
+            int kseq_status = 0;
+            while ((kseq_status = kseq_read(seq)) >= 0) {
                 largestContigSize = seq->seq.l > largestContigSize ? seq->seq.l : largestContigSize;
                 string header = readHeader(seq);
                 processHeader(i, header);
@@ -358,6 +370,10 @@ void MBGC_Encoder::encodeTargetsWithParallelIO() {
                     seqLeft -= bSize;
                 }
                 targetLiterals[0].push_back(MBGC_Params::SEQ_SEPARATOR_MARK);
+            }
+            if (kseq_status <= -2) {
+                fprintf(stderr, "Error parsing file %s (errCode: %d) - expected FASTA format\n", fileNames[i].c_str(), kseq_status);
+                exit(EXIT_FAILURE);
             }
             PgHelpers::writeValue<uint32_t>(seqsCountDest, seqCounter);
 #ifdef DEVELOPER_BUILD
@@ -433,7 +449,8 @@ inline void MBGC_Encoder::encodeTargetSequence(int i) {
         while (j >= 0 && matchingLocksPos[j] == SIZE_MAX)
             matchingLocksPos[j--] = matcher->acquireWorkerMatchingLockPos();
     }
-    while ((l = kseq_read(seq)) >= 0) {
+    int kseq_status = 0;
+    while ((kseq_status = kseq_read(seq)) >= 0) {
         largestContigSize = seq->seq.l > largestContigSize ? seq->seq.l : largestContigSize;
         string header = readHeader(seq);
         processHeader(i + 1, header);
@@ -450,6 +467,10 @@ inline void MBGC_Encoder::encodeTargetSequence(int i) {
             matcher->matchTexts(resMatches, seqPtr, bSize, false, false, params->k, matchingLocksPos[i]);
             resCount += resMatches.size();
             size_t currentUnmatched = processMatches(resMatches, seqPtr, bSize, i);
+            if (processedTargetsCount < i && currentUnmatched * 2 > bSize && bSize > 2048) {
+                while (processedTargetsCount < i)
+                    nanosleep((const struct timespec[]) {{0, 100L}}, NULL);
+            }
             if (params->isContigProperForRefExtension(bSize, currentUnmatched, unmatchedFractionFactor)) {
                 largestRefContigSize = bSize > largestRefContigSize ? bSize : largestRefContigSize;
                 targetRefExtensions[i].append(seqPtr, bSize);
@@ -462,6 +483,10 @@ inline void MBGC_Encoder::encodeTargetSequence(int i) {
             seqLeft -= bSize;
         }
         targetLiterals[i].push_back(MBGC_Params::SEQ_SEPARATOR_MARK);
+    }
+    if (kseq_status <= -2) {
+        fprintf(stderr, "Error parsing file %s (errCode: %d) - expected FASTA format\n", fileNames[i].c_str(), kseq_status);
+        exit(EXIT_FAILURE);
     }
     kseq_destroy(seq);
 #pragma omp critical
@@ -561,7 +586,7 @@ void MBGC_Encoder::readFilesParallelTask(const int thread_no) {
         while (claimedTargetsCount < targetsCount) {
             if (thread_no == readingThreadsCount - 1) {
                 int64_t t = i % readingThreadsCount;
-                if (in[t] < targetsCount && in[t] < out[t] + readingThreadsCount * READING_BUFFER_SIZE) {
+                if (in[t] < targetsCount && in[t] < out[t] + readingThreadsCount * readingBufferSize) {
                     fps[in[t]] = gzsplit_next(refFp, params->MIN_REF_INIT_SIZE, '>');
                     if (fps[in[t]].size == 0)
                         targetsCount = in[t];
@@ -577,7 +602,7 @@ void MBGC_Encoder::readFilesParallelTask(const int thread_no) {
     } else {
         while (claimedTargetsCount < targetsCount) {
             if (in[thread_no] < targetsCount &&
-                in[thread_no] < out[thread_no] + readingThreadsCount * READING_BUFFER_SIZE) {
+                in[thread_no] < out[thread_no] + readingThreadsCount * readingBufferSize) {
                 fps[in[thread_no]] = gzopen(fileNames[in[thread_no] + 1].c_str());
                 in[thread_no] += readingThreadsCount;
             } else
@@ -593,8 +618,8 @@ void MBGC_Encoder::encodeTargetsParallel() {
 #pragma omp single
         {
             readingThreadsCount = omp_get_num_threads() - 1;
-            if (readingThreadsCount > targetsCount / READING_BUFFER_SIZE)
-                readingThreadsCount = targetsCount ? (((int64_t) targetsCount - 1) / READING_BUFFER_SIZE) + 1 : 0;
+            if (readingThreadsCount > targetsCount / readingBufferSize)
+                readingThreadsCount = targetsCount ? (((int64_t) targetsCount - 1) / readingBufferSize) + 1 : 0;
             out.resize(readingThreadsCount);
             in.resize(readingThreadsCount);
             claimedTargetsCount = 0;
@@ -681,17 +706,18 @@ size_t MBGC_Encoder::prepareAndCompressStreams() {
     cJobs.emplace_back("sequences headers templates stream... ", headersTemplates, headersTemplateCoderProps.get());
     auto headers1stCoderProps = getDefaultCoderProps(LZMA_CODER, CODER_LEVEL_NORMAL, LZMA_DATAPERIODCODE_8_t);
     auto headers2ndCoderProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_NORMAL, 3);
-    auto headersCoderProps = params->headerMaxCompression ?
+    auto headersCoderProps = params->ultraStreamsCompression ?
             getCompoundCoderProps(headers1stCoderProps.get(), headers2ndCoderProps.get()) :
             getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX, 16);
     cJobs.emplace_back("sequences headers stream... ", headersStr, headersCoderProps.get());
     auto refExtFactorsProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX, 4);
     cJobs.emplace_back("unmatched fraction factors stream... ", unmatchedFractionFactors.data(),
                                    unmatchedFractionFactors.size(), refExtFactorsProps.get());
-    auto seqCoderProps = params->fastDecoder ?
-            getDefaultCoderProps(LZMA_CODER, CODER_LEVEL_FAST, LZMA_DATAPERIODCODE_8_t)
-            : getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX,
-                                   params->coderLevel == CODER_LEVEL_FAST ? 4 : 7);
+    auto seqCoderProps = params->ultraStreamsCompression ?
+            getDefaultCoderProps(LZMA_CODER, CODER_LEVEL_MAX, LZMA_DATAPERIODCODE_8_t)
+            :(params->fastDecoder ? getDefaultCoderProps(LZMA_CODER, CODER_LEVEL_FAST, LZMA_DATAPERIODCODE_8_t)
+                : getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX,
+                                   params->coderLevel == CODER_LEVEL_FAST ? 4 : 7));
     int seqBlocksCount = (params->coderLevel >= CODER_LEVEL_MAX ? 1 : 2) * (params->fastDecoder ? 2 : 1);
     ParallelBlocksCoderProps blockSeqCoderProps(seqBlocksCount, seqCoderProps.get());
     cJobs.emplace_back("reference and literals stream... ", targetLiterals[0], &blockSeqCoderProps);
