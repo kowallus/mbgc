@@ -100,7 +100,7 @@ public:
 
     virtual int getNumThreads() const override { return p->numThreads; };
 
-    string log() {
+    string log() override {
         return " lzma (algo = " + to_string(p->algo) + "; dictSize = " + to_string(p->dictSize >> 20)
                              + "MB; lc = " + to_string(p->lc) + "; lp = " + to_string(p->lp) + "; pb = "
                              + to_string(p->pb) + "; fb = " + to_string(p->fb)
@@ -115,7 +115,7 @@ public:
 MY_STDAPI LzmaCompress(unsigned char *&dest, size_t &destLen, const unsigned char *src, size_t srcLen,
                        CLzmaEncProps* props, double estimated_compression);
 
-MY_STDAPI LzmaUncompress(unsigned char *dest, size_t *destLen, istream &src, size_t *srcLen,
+MY_STDAPI LzmaUncompress(unsigned char *dest, size_t *destLen, const unsigned char *src, size_t *srcLen,
         ostream* logout = PgHelpers::devout);
 
 #endif //PGTOOLS_LZMACODER_H

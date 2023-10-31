@@ -78,10 +78,18 @@ unsigned char* Compress(size_t &destLen, const unsigned char *src, size_t srcLen
             *logout << "\n\t\t";
             compSeq = Compress(destLen, (const unsigned char*)  src, srcLen,
                                ((CompoundCoderProps*) props)->primaryCoder, estimated_compression, logout);
+            if (destLen >= srcLen) {
+                destLen = srcLen;
+                memcpy(compSeq, src, srcLen);
+            }
             ((CompoundCoderProps*) props)->compLen = destLen;
             *logout << "\t\t";
             dest = Compress(destLen, (const unsigned char*)  compSeq, destLen,
                             ((CompoundCoderProps*) props)->secondaryCoder, estimated_compression, logout);
+            if (destLen >= ((CompoundCoderProps*) props)->compLen) {
+                destLen = ((CompoundCoderProps*) props)->compLen;
+                swap(dest, compSeq);
+            }
             *logout << "\t\t";
             delete[] compSeq;
             res = SZ_OK;
@@ -94,84 +102,96 @@ unsigned char* Compress(size_t &destLen, const unsigned char *src, size_t srcLen
 
     if (res != SZ_OK) {
         fprintf(stderr, "Error during compression (code: %d).\n", res);
+        fprintf(stderr,"%s\tsrcLen: %zu\tdestLen: %zu\tcoder: %d\n",
+                props->log().c_str(), srcLen, destLen, (int) props->getCoderType());
         exit(EXIT_FAILURE);
     }
-    *logout << props->log() << " ... ";
     const double ratio = ((double) destLen) / srcLen;
-    *logout << "compressed " << srcLen << " bytes to " << destLen << " bytes (ratio "
-         << PgHelpers::toString(ratio, 3) << " vs estimated "
-         << PgHelpers::toString(estimated_compression, 3) << ") in "
-         << PgHelpers::time_millis(start_t) << " msec." << endl;
-    if (ratio > estimated_compression)
-        *logout << "WARNING: compression ratio " << PgHelpers::toString(ratio / estimated_compression, 5)
-        << " times greater than estimation." << endl;
-
+    if (destLen < srcLen) {
+        *logout << props->log() << " ... ";
+        *logout << "compressed " << srcLen << " bytes to " << destLen << " bytes (ratio "
+                << PgHelpers::toString(ratio, 3) << " vs estimated "
+                << PgHelpers::toString(estimated_compression, 3) << ") in "
+                << PgHelpers::time_millis(start_t) << " msec." << endl;
+        if (ratio > estimated_compression)
+            *logout << "WARNING: compression ratio " << PgHelpers::toString(ratio / estimated_compression, 5)
+                    << " times greater than estimation." << endl;
+    } else {
+        *logout << " ignored" << props->log() << " due ratio >=1 ... " << srcLen << " bytes disregarding compression in "
+                << PgHelpers::time_millis(start_t) << " msec." << endl;
+    }
     return dest;
+}
+
+MY_STDAPI NoCoderUncompress(unsigned char *dest, size_t *destLen, unsigned char *src, size_t *srcLen, ostream* logout) {
+    *destLen = *srcLen;
+    *logout << "... raw ... ";
+    memcpy(dest, (const void *) src, *destLen);
+    return SZ_OK;
 }
 
 void Uncompress(unsigned char* dest, size_t destLen, istream &src, size_t srcLen, uint8_t coder_type,
         std::ostream* logout) {
-    chrono::steady_clock::time_point start_t = chrono::steady_clock::now();
-    int res = 0;
-    size_t outLen = destLen;
     switch (coder_type) {
-    case LZMA_CODER:
-        res = LzmaUncompress(dest, &outLen, src, &srcLen, logout);
-    break;
-    case PPMD7_CODER:
-        res = PpmdUncompress(dest, &outLen, src, &srcLen, logout);
-    break;
-    case PARALLEL_BLOCKS_CODER_TYPE:
-        res = parallelBlocksDecompress(dest, &outLen, src, &srcLen, logout);
-        break;
-    case LZMA2_CODER:
     default:
-        fprintf(stderr, "Unsupported coder type: %d.\n", coder_type);
-        exit(EXIT_FAILURE);
+        string srcString;
+        srcString.resize(srcLen);
+        PgHelpers:readArray(src, (void*) srcString.data(), srcLen);
+        Uncompress(dest, destLen, (unsigned char*) srcString.data(), srcLen, coder_type, logout);
     }
-    assert(outLen == destLen);
-
-    if (res != SZ_OK) {
-        fprintf(stderr, "Error during decompression (code: %d).\n", res);
-        exit(EXIT_FAILURE);
-    }
-    *logout << "uncompressed " << srcLen << " bytes to " << destLen << " bytes in "
-         << PgHelpers::time_millis(start_t) << " msec." << endl;
 }
 
-void Uncompress(unsigned char* dest, size_t destLen, string& src, size_t srcLen, uint8_t coder_type) {
+void Uncompress(unsigned char* dest, size_t destLen, unsigned char* src, size_t srcLen, uint8_t coder_type,
+                std::ostream* logout) {
     chrono::steady_clock::time_point start_t = chrono::steady_clock::now();
     int res = SZ_OK;
     size_t outLen = destLen;
     switch (coder_type) {
         case VARLEN_DNA_CODER:
-            res = PgHelpers::VarLenDNACoder::Uncompress(dest, &outLen,
-                                                        (unsigned char*) src.data(), &srcLen);
+            res = PgHelpers::VarLenDNACoder::Uncompress(dest, &outLen, src, &srcLen);
             break;
+        case NO_CODER:
+            res = NoCoderUncompress(dest, &outLen, src, &srcLen, logout);
+            break;
+        case LZMA_CODER:
+            res = LzmaUncompress(dest, &outLen, src, &srcLen, logout);
+            break;
+        case PPMD7_CODER:
+            res = PpmdUncompress(dest, &outLen, src, &srcLen, logout);
+            break;
+        case PARALLEL_BLOCKS_CODER_TYPE:
+            res = parallelBlocksDecompress(dest, &outLen, src, &srcLen, logout);
+            break;
+        case LZMA2_CODER:
         default:
-            istringstream srcStr(std::move(src));
-            Uncompress(dest, outLen, srcStr, srcLen, coder_type);
+            fprintf(stderr, "Unsupported coder type: %d.\n", coder_type);
+            exit(EXIT_FAILURE);
     }
     assert(outLen == destLen);
 
     if (res != SZ_OK) {
         fprintf(stderr, "Error during decompression (code: %d).\n", res);
+        fprintf(stderr, "srcLen: %zu\tdestLen: %zu\tcoder: %d\n", srcLen, destLen, (int) coder_type);
         exit(EXIT_FAILURE);
     }
-    *PgHelpers::devout << "uncompressed " << srcLen << " bytes to " << destLen << " bytes in "
+    *logout << "uncompressed " << srcLen << " bytes to " << destLen << " bytes in "
                          << PgHelpers::time_millis(start_t) << " msec." << endl;
 }
 
 void writeCompressed(ostream &dest, const char *src, size_t srcLen, CoderProps* props, double estimated_compression) {
     if (srcLen == 0) {
-        PgHelpers::writeValue<uint64_t>(dest, 0, false);
+        PgHelpers::writeValue<uint64_t>(dest, 0);
         *PgHelpers::devout << "skipped compression (0 bytes)." << endl;
         return;
     }
     size_t compLen = 0;
     unsigned char* compSeq = Compress(compLen, (const unsigned char*) src, srcLen, props, estimated_compression);
     writeHeader(dest, srcLen, compLen, props);
-    PgHelpers::writeArray(dest, (void*) compSeq, compLen);
+    if (compLen < srcLen) {
+        PgHelpers::writeArray(dest, (void*) compSeq, compLen);
+    } else {
+        PgHelpers::writeArray(dest, (void *) src, srcLen);
+    }
     delete[] compSeq;
 }
 
@@ -180,41 +200,79 @@ void writeCompressed(ostream &dest, const string& srcStr, CoderProps* props, dou
 }
 
 void writeHeader(ostream &dest, size_t srcLen, size_t destLen, CoderProps *props) {
-    PgHelpers::writeValue<uint64_t>(dest, srcLen, false);
+    PgHelpers::writeValue<uint64_t>(dest, srcLen);
     if (props->getCoderType() == COMPOUND_CODER_TYPE) {
-        PgHelpers::writeValue<uint64_t>(dest,destLen + ((CompoundCoderProps*) props)->primaryCoder->getHeaderLen(), false);
-        PgHelpers::writeValue<uint8_t>(dest, COMPOUND_CODER_TYPE, false);
-        PgHelpers::writeValue<uint64_t>(dest, ((CompoundCoderProps*) props)->compLen, false);
-        PgHelpers::writeValue<uint8_t>(dest,
-                                       ((CompoundCoderProps*) props)->primaryCoder->getCoderType(), false);
+        PgHelpers::writeValue<uint64_t>(dest,destLen + ((CompoundCoderProps*) props)->primaryCoder->getHeaderLen());
+        PgHelpers::writeValue<uint8_t>(dest, COMPOUND_CODER_TYPE);
+        PgHelpers::writeValue<uint64_t>(dest, ((CompoundCoderProps*) props)->compLen);
+        PgHelpers::writeValue<uint8_t>(dest, ((CompoundCoderProps*) props)->compLen == srcLen ?
+            NO_CODER : ((CompoundCoderProps*) props)->primaryCoder->getCoderType());
         writeHeader(dest, ((CompoundCoderProps*) props)->compLen, destLen, ((CompoundCoderProps*) props)->secondaryCoder);
+    } else if (destLen >= srcLen) {
+        PgHelpers::writeValue<uint64_t>(dest, srcLen);
+        PgHelpers::writeValue<uint8_t>(dest, NO_CODER);
     } else {
-        PgHelpers::writeValue<uint64_t>(dest, destLen, false);
-        PgHelpers::writeValue<uint8_t>(dest, props->getCoderType(), false);
+        PgHelpers::writeValue<uint64_t>(dest, destLen);
+        PgHelpers::writeValue<uint8_t>(dest, props->getCoderType());
     }
 }
 
-void readCompressed(istream &src, string& dest) {
-    size_t destLen = 0;
-    size_t srcLen = 0;
+void readCompressed(istream &src, string& dest, ostream* logout) {
+    uint64_t destLen = 0;
+    uint64_t srcLen = 0;
     uint8_t coder_type = 0;
-    PgHelpers::readValue<uint64_t>(src, destLen, false);
+    PgHelpers::readValue<uint64_t>(src, destLen);
     dest.resize(destLen);
     if (destLen == 0)
         return;
-    PgHelpers::readValue<uint64_t>(src, srcLen, false);
-    PgHelpers::readValue<uint8_t>(src, coder_type, false);
+    PgHelpers::readValue<uint64_t>(src, srcLen);
+    PgHelpers::readValue<uint8_t>(src, coder_type);
     if (coder_type == COMPOUND_CODER_TYPE) {
-        size_t compLen = 0;
+        uint64_t compLen = 0;
         uint8_t primary_coder_type = 0;
-        PgHelpers::readValue<uint64_t>(src, compLen, false);
-        PgHelpers::readValue<uint8_t>(src, primary_coder_type, false);
+        PgHelpers::readValue<uint64_t>(src, compLen);
+        PgHelpers::readValue<uint8_t>(src, primary_coder_type);
         string component;
-        readCompressed(src, component);
+        *logout << "\t\t";
+        readCompressed(src, component, logout);
         assert(compLen == component.length());
-        Uncompress((unsigned char *) dest.data(), destLen, component, compLen, primary_coder_type);
+        *logout << "\t\t";
+        Uncompress((unsigned char *) dest.data(), destLen, (unsigned char*) component.data(), compLen, primary_coder_type, logout);
     } else {
-        Uncompress((unsigned char *) dest.data(), destLen, src, srcLen, coder_type);
+        Uncompress((unsigned char *) dest.data(), destLen, src, srcLen, coder_type, logout);
+    }
+#ifdef DEVELOPER_BUILD
+    if (dump_after_decompression) {
+        string dumpFileName = dump_after_decompression_prefix + (dump_after_decompression_counter < 10?"0":"");
+        PgHelpers::writeArrayToFile(dumpFileName + PgHelpers::toString(dump_after_decompression_counter++),
+                                      (void*) dest.data(), destLen);
+    }
+#endif
+}
+
+void readCompressed(unsigned char *src, string& dest, ostream* logout) {
+    uint64_t destLen = 0;
+    uint64_t srcLen = 0;
+    uint8_t coder_type = 0;
+    PgHelpers::readValue<uint64_t>(src, destLen);
+    dest.resize(destLen);
+    if (destLen == 0)
+        return;
+    PgHelpers::readValue<uint64_t>(src, srcLen);
+    PgHelpers::readValue<uint8_t>(src, coder_type);
+    if (coder_type == COMPOUND_CODER_TYPE) {
+        uint64_t compLen = 0;
+        uint8_t primary_coder_type = 0;
+        PgHelpers::readValue<uint64_t>(src, compLen);
+        PgHelpers::readValue<uint8_t>(src, primary_coder_type);
+        string component;
+        *logout << "\t\t";
+        readCompressed(src, component, logout);
+        assert(compLen == component.length());
+        *logout << "\t\t";
+        Uncompress((unsigned char *) dest.data(), destLen, (unsigned char*) component.data(), compLen, primary_coder_type, logout);
+    } else {
+        Uncompress((unsigned char *) dest.data(), destLen, src, srcLen, coder_type, logout);
     }
 #ifdef DEVELOPER_BUILD
     if (dump_after_decompression) {
@@ -255,10 +313,10 @@ int parallelBlocksCompress(unsigned char *&dest, size_t &destLen, const unsigned
     return SZ_OK;
 }
 
-int parallelBlocksDecompress(unsigned char *dest, size_t *destLen, istream &src, size_t *srcLen, ostream* logout) {
+int parallelBlocksDecompress(unsigned char *dest, size_t *destLen, unsigned char* src, size_t *srcLen, ostream* logout) {
     chrono::steady_clock::time_point start_t = chrono::steady_clock::now();
     int numOfBlocks;
-    PgHelpers::readValue(src, numOfBlocks, false);
+    PgHelpers::readValue<int>(src, numOfBlocks);
     *logout << "... parallel_blocks (no = " << numOfBlocks << ") of ";
     size_t offset = 0;
 #pragma omp parallel
@@ -267,26 +325,25 @@ int parallelBlocksDecompress(unsigned char *dest, size_t *destLen, istream &src,
         {
             for (int i = 0; i < numOfBlocks; i++) {
                 unsigned char* destPtr = dest + offset;
-                size_t blockLen = 0;
-                size_t srcLen = 0;
+                uint64_t blockLen = 0;
+                uint64_t srcLen = 0;
                 uint8_t coder_type = 0;
-                string srcString;
-                PgHelpers::readValue<uint64_t>(src, blockLen, false);
+                unsigned char* srcString;
+                PgHelpers::readValue<uint64_t>(src, blockLen);
                 offset += blockLen;
                 if (blockLen > 0) {
-                    PgHelpers::readValue<uint64_t>(src, srcLen, false);
-                    PgHelpers::readValue<uint8_t>(src, coder_type, false);
-                    srcString.resize(srcLen);
-                    PgHelpers:readArray(src, (void*) srcString.data(), srcLen);
+                    PgHelpers::readValue<uint64_t>(src, srcLen);
+                    PgHelpers::readValue<uint8_t>(src, coder_type);
+                    srcString = src;
+                    src += srcLen;
                 }
                 if (blockLen == 0)
                     continue;
 #pragma omp task
                 {
-                    istringstream srcStream(std::move(srcString));
                     ostringstream tmpout;
                     ostream* currentOut = i == 0?&tmpout:&null_stream;
-                    Uncompress(destPtr, blockLen, srcStream, srcLen, coder_type, currentOut);
+                    Uncompress(destPtr, blockLen, srcString, srcLen, coder_type, currentOut);
                     if (i == 0) {
                         string log = tmpout.str();
                         *logout << log.substr(4, log.find("...", 4));
@@ -330,16 +387,24 @@ void CompressionJob::writeCompressedCollectiveParallel(ostream &dest, vector<Com
     }
     for(int i = 0; i < cJobs.size(); i++) {
         if (cJobs[i].srcLen == 0) {
-            PgHelpers::writeValue<uint64_t>(dest, 0, false);
+            PgHelpers::writeValue<uint64_t>(dest, 0);
             *PgHelpers::devout << "skipped compression (0 bytes)." << endl;
             continue;
         }
-        *logout << "\t" << cJobs[i].log;
         writeHeader(dest, cJobs[i].srcLen, compLens[i], cJobs[i].props);
-        PgHelpers::writeArray(dest, (void *) compSeqs[i], compLens[i]);
+        if (compLens[i] < cJobs[i].srcLen) {
+            *logout << "\t" << cJobs[i].log;
+            PgHelpers::writeArray(dest, (void *) compSeqs[i], compLens[i]);
+        } else {
+            *logout << "\t" << "skipped compression (" << cJobs[i].srcLen << " bytes)." << endl;
+            PgHelpers::writeArray(dest, (void *) cJobs[i].src, cJobs[i].srcLen);
+        }
+
         delete[] compSeqs[i];
     }
     *logout << "collective compression finished in " << PgHelpers::time_millis(start_t) << " msec." << endl;
+    if (logout != &null_stream)
+        *PgHelpers::logout << PgHelpers::time_millis(start_t) << "       \t";
 }
 
 void readCompressedCollectiveParallel(istream &src, vector<string*>& destStrings) {
@@ -353,35 +418,36 @@ void readCompressedCollectiveParallel(istream &src, vector<string*>& destStrings
 #pragma omp single
         {
             for (int i = 0; i < destStrings.size(); i++) {
-                size_t destLen = 0;
-                size_t srcLen = 0;
-                size_t compLen = 0;
+                uint64_t destLen = 0;
+                uint64_t srcLen = 0;
+                uint64_t compLen = 0;
                 uint8_t coder_type = 0;
                 uint8_t primary_coder_type = 0;
                 string srcString;
-                PgHelpers::readValue<uint64_t>(src, destLen, false);
+                PgHelpers::readValue<uint64_t>(src, destLen);
                 destStrings[i]->resize(destLen);
                 if (destLen == 0)
                     continue;
-                PgHelpers::readValue<uint64_t>(src, srcLen, false);
-                PgHelpers::readValue<uint8_t>(src, coder_type, false);
+                PgHelpers::readValue<uint64_t>(src, srcLen);
+                PgHelpers::readValue<uint8_t>(src, coder_type);
                 srcString.resize(srcLen);
                 if (coder_type == COMPOUND_CODER_TYPE) {
-                    PgHelpers::readValue<uint64_t>(src, compLen, false);
-                    PgHelpers::readValue<uint8_t>(src, primary_coder_type, false);
+                    PgHelpers::readValue<uint64_t>(src, compLen);
+                    PgHelpers::readValue<uint8_t>(src, primary_coder_type);
                 }
                 PgHelpers::readArray(src, (void *) srcString.data(), srcLen);
 #pragma omp task
                 {
-                    istringstream srcStream(std::move(srcString));
                     if (coder_type == COMPOUND_CODER_TYPE) {
                         string component;
-                        readCompressed(srcStream, component);
+                        logOuts[i] << "\t";
+                        readCompressed((unsigned char*) srcString.data(), component, &logOuts[i]);
                         assert(compLen == component.length());
-                        Uncompress((unsigned char *) destStrings[i]->data(), destLen, component, compLen,
-                                   primary_coder_type);
+                        logOuts[i] << "\t\t";
+                        Uncompress((unsigned char *) destStrings[i]->data(), destLen, (unsigned char*) component.data(), compLen,
+                                   primary_coder_type, &logOuts[i]);
                     } else
-                        Uncompress((unsigned char *) destStrings[i]->data(), destLen, srcStream, srcLen, coder_type,
+                        Uncompress((unsigned char *) destStrings[i]->data(), destLen, (unsigned char*) srcString.data(), srcLen, coder_type,
                                    &logOuts[i]);
                 }
             }
@@ -399,5 +465,6 @@ void readCompressedCollectiveParallel(istream &src, vector<string*>& destStrings
     }
     *PgHelpers::devout << "collective decompression finished in " << PgHelpers::time_millis(start_t) << " msec."
                        << endl;
+    *PgHelpers::logout << PgHelpers::time_millis(start_t) << "       \t";
 }
 

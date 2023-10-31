@@ -105,8 +105,8 @@ struct CByteInBufWrap
     IByteIn vt;
     const Byte *Cur = 0;
     const Byte *Lim = 0;
-    Byte *Buf;
-    UInt32 Size;
+    const Byte *Buf;
+    UInt64 Size;
     bool Extra;
     int Res;
 
@@ -116,7 +116,7 @@ struct CByteInBufWrap
 
     bool reloadSrcBuf();
 
-    CByteInBufWrap(unsigned char *buf, size_t bufLen);
+    CByteInBufWrap(const unsigned char *buf, size_t bufLen);
     CByteInBufWrap(istream &src, size_t bufLen);
     ~CByteInBufWrap() {
         delete[] srcBuf;
@@ -134,7 +134,7 @@ static Byte Wrap_ReadByte(const IByteIn *pp) throw()
     return 0;
 }
 
-CByteInBufWrap::CByteInBufWrap(unsigned char *buf, size_t bufLen): Buf(buf), Size(bufLen)
+CByteInBufWrap::CByteInBufWrap(const unsigned char *buf, size_t bufLen): Buf(buf), Size(bufLen)
 {
     Cur = Buf;
     Lim = Buf + Size;
@@ -175,13 +175,13 @@ CByteInBufWrap::CByteInBufWrap(istream &src, size_t bufLen): src(&src),
     vt.Read = Wrap_Stream_ReadByte;
 }
 
-MY_STDAPI PpmdUncompress(unsigned char *dest, size_t *destLen, istream &src, size_t *srcLen, ostream* logout) {
+MY_STDAPI PpmdUncompress(unsigned char *dest, size_t *destLen, const unsigned char *src, size_t *srcLen, ostream* logout) {
     size_t propsSize = LZMA_PROPS_SIZE;
     CPpmd7 ppmd;
     //LzmaDecProps_Set(&props, coder_level, srcLen, numThreads, coder_param); // extract method, support numThreads?
     Ppmd7_Construct(&ppmd);
     unsigned char propsBuf[LZMA_PROPS_SIZE];
-    PgHelpers::readArray(src, (void*) propsBuf, propsSize);
+    memcpy(propsBuf, src, propsSize);
     uint32_t memSize = GetUi32(propsBuf + 1);
     if (!Ppmd7_Alloc(&ppmd, memSize, &g_Alloc))
         return SZ_ERROR_MEM;
@@ -190,7 +190,7 @@ MY_STDAPI PpmdUncompress(unsigned char *dest, size_t *destLen, istream &src, siz
     *logout << "... ppmd (mem = " << (memSize >> 20) << "MB; ord = " << order << ") ... ";
     CPpmd7z_RangeDec rDec;
     Ppmd7z_RangeDec_CreateVTable(&rDec);
-    CByteInBufWrap _inStream(src, *srcLen - propsSize);
+    CByteInBufWrap _inStream(src + propsSize, *srcLen - propsSize);
     rDec.Stream = &_inStream.vt;
 
     int Res = SZ_OK;

@@ -22,6 +22,40 @@ public:
     int overflow(int c) { return c; }
 };
 
+class WrapperStreamBuf : public std::streambuf
+{
+public:
+    WrapperStreamBuf() { setg(nullptr, nullptr, nullptr); }
+    WrapperStreamBuf(char* s, std::size_t n) { setg(s, s, s + n); }
+    void wrapData(char* s, std::size_t n) { setg(s, s, s + n); }
+    size_t getPosition() { return gptr() - eback(); }
+    void setPosition(size_t pos) { setg(eback(), eback() + pos, egptr()); }
+    bool isEnd() { return gptr() == egptr(); };
+};
+
+class WrapperStrStream : public std::istringstream
+{
+private:
+    WrapperStreamBuf buf;
+public:
+    WrapperStrStream() : std::istringstream("") { }
+    WrapperStrStream(string& s) : std::istringstream("") { str(s); }
+    WrapperStrStream(const WrapperStrStream& wss) : std::istringstream() { set_rdbuf(&(buf = wss.buf)); }
+    WrapperStrStream(WrapperStrStream&& wss) : std::istringstream() { set_rdbuf(&(buf = wss.buf)); }
+    WrapperStrStream& operator=(WrapperStrStream &wss) { set_rdbuf(&(buf = wss.buf)); return *this; }
+    void str(string& str) { wrapData((char*) str.data(), str.size()); }
+    size_t getPosition() { return buf.getPosition(); }
+    void setPosition(size_t pos) { buf.setPosition(pos); }
+    bool isEnd() { return buf.isEnd(); }
+    void skipOffset(uint64_t offset) { buf.setPosition(buf.getPosition() + offset); }
+
+    void wrapData(char* s, size_t n) {
+        buf.wrapData(s, n);
+        set_rdbuf(&buf);
+    }
+};
+
+
 extern std::ostream null_stream;
 
 namespace PgHelpers {
@@ -30,18 +64,21 @@ namespace PgHelpers {
 
     // bioinformatical routines
 
+    char upperReverseComplement(char symbol);
     char reverseComplement(char symbol);
+    string upperReverseComplement(string kmer);
     string reverseComplement(string kmer);
+    void upperReverseComplement(const char* start, const std::size_t N, char* target);
     void reverseComplement(const char* start, const std::size_t N, char* target);
+    void upperReverseComplementInPlace(char* start, const std::size_t N);
     void reverseComplementInPlace(char* start, const std::size_t N);
+    void upperReverseComplementInPlace(string &kmer);
     void reverseComplementInPlace(string &kmer);
+    void upperSequence(char* start, const std::size_t N);
     double qualityScore2approxCorrectProb(string quality);
     double qualityScore2correctProb(string quality);
 
-    inline uint8_t symbol2value(char symbol);
-    inline char value2symbol(uint8_t value);
-    uint8_t mismatch2code(char actual, char mismatch);
-    char code2mismatch(char actual, uint8_t code);
+    void revertToMBGC121();
 
     template<typename uint_read_len>
     void convertMisRevOffsets2Offsets(uint_read_len *mismatchOffsets, uint8_t mismatchesCount, uint_read_len readLength) {
@@ -145,8 +182,13 @@ namespace PgHelpers {
 
     extern std::ostream *appout;
     extern std::ostream *devout;
+    extern std::ostream *logout;
+
+    void openLogFile(char* filename);
+    void closeLogFile();
 
     void createFolders(string pathToFile);
+    void normalizePath(string &fileName, int &finalPos, int &finalLen, bool ignorePath);
 
     void* readArray(std::istream&, size_t arraySizeInBytes);
     void readArray(std::istream&, void* destArray, size_t arraySizeInBytes);
@@ -165,32 +207,24 @@ namespace PgHelpers {
     bool confirmTextReadMode(std::istream &src);
 
     template<typename t_val>
-    void writeValue(std::ostream &dest, const t_val value, bool plainTextWriteMode) {
-        if (plainTextWriteMode)
-            dest << value << endl;
-        else
-            dest.write((char *) &value, sizeof(t_val));
-    }
-    template<typename t_val>
-    void readValue(std::istream &src, t_val& value, bool plainTextReadMode) {
-        if (plainTextReadMode)
-            src >> value;
-        else
-            src.read((char *) &value, sizeof(t_val));
+    inline void writeValue(std::ostream &dest, const t_val value) {
+        dest.write((char *) &value, sizeof(t_val));
     }
 
-    template<>
-    void writeValue(std::ostream &dest, const uint8_t value, bool plainTextWriteMode);
-    template<>
-    void readValue(std::istream &src, uint8_t& value, bool plainTextReadMode);
+    template<typename t_val>
+    inline void readValue(std::istream &src, t_val& value) {
+        src.read((char *) &value, sizeof(t_val));
+    }
 
     template<typename t_val>
-    void writeValue(std::ostream &dest, const t_val value) {
-        writeValue(dest, value, plainTextWriteMode);
+    void readValue(unsigned char* &src, t_val& value) {
+        memcpy((void*) &value, src, sizeof(value));
+        src += sizeof(value);
     }
 
     void writeUIntByteFrugal(std::ostream &dest, uint64_t value);
     void writeUIntWordFrugal(std::ostream &dest, uint64_t value);
+    void writeUInt64Frugal(std::ostream &dest, uint64_t value);
 
     template<typename t_val>
     void readUIntByteFrugal(std::istream &src, t_val& value) {
@@ -216,9 +250,28 @@ namespace PgHelpers {
         } while (yWord >= 32768);
     }
 
+    template<typename t_val>
+    void readUInt64Frugal(std::istream &src, t_val& value) {
+        uint16_t yWord = 0;
+        src.read((char *) &yWord, sizeof(uint16_t));
+        if (yWord < UINT16_MAX)
+            value = yWord;
+        else {
+            uint32_t y32 = 0;
+            src.read((char *) &y32, sizeof(uint32_t));
+            if (y32 < UINT32_MAX)
+                value = y32;
+            else {
+                uint64_t y64 = 0;
+                src.read((char *) &y64, sizeof(uint64_t));
+                value = y64;
+            }
+        }
+    }
+
     extern bool bytePerReadLengthMode;
 
-    void readReadLengthValue(std::istream &src, uint16_t& value, bool plainTextReadMode);
+    void readReadLengthValue(std::istream &src, uint16_t& value);
 
     void writeReadLengthValue(std::ostream &dest, const uint16_t value);
 
@@ -269,8 +322,8 @@ namespace PgHelpers {
     template<typename t_arr>
     size_t safeNewArrayAlloc(t_arr *&arr, size_t allocSize, bool zerofill, uint8_t totalLimitPercent = UINT8_MAX) {
         size_t totalRAM = getTotalSystemMemory();
-        if (totalLimitPercent != UINT8_MAX && allocSize * sizeof(t_arr) > totalRAM * totalLimitPercent / 100)
-            allocSize = (totalRAM * totalLimitPercent / 100) / sizeof(t_arr);
+        if (totalLimitPercent != UINT8_MAX && allocSize > totalRAM * totalLimitPercent / 100)
+            allocSize = totalRAM * totalLimitPercent / 100;
         bool success = false;
         do {
             try {

@@ -2,13 +2,13 @@
 
 #include "byteswap.h"
 #include <sys/stat.h>
+#include <regex>
 
 #ifdef __MINGW32__
 #include <sysinfoapi.h>
 #else
 #include <unistd.h>
 #endif
-
 
 int PgHelpers::numberOfThreads = 8;
 
@@ -17,6 +17,26 @@ std::ostream *PgHelpers::devout = &std::cout;
 
 NullBuffer null_buffer;
 std::ostream null_stream(&null_buffer);
+
+std::ostream *PgHelpers::logout = &null_stream;
+std::fstream *logfileout = NULL;
+
+void PgHelpers::openLogFile(char* filename) {
+    logfileout = new fstream(filename, ios_base::in | ios_base::app);
+    if (!*logfileout) {
+        fprintf(stderr, "Cannot open log file: %s\n", filename);
+        exit(EXIT_FAILURE);
+    }
+    logout = logfileout;
+}
+
+void PgHelpers::closeLogFile() {
+    if (logfileout) {
+        delete(logfileout);
+        logfileout = NULL;
+        logout = &null_stream;
+    }
+}
 
 // TIME
 
@@ -62,6 +82,22 @@ void PgHelpers::createFolders(string pathToFile) {
         mkdir(pathToFile.substr(0, pos++).c_str(), 0777);
 #endif
     }
+}
+
+void PgHelpers::normalizePath(string &fileName, int &finalPos, int &finalLen, bool ignorePath) {
+    if(!fileName.empty() && *fileName.rbegin() == '\r') fileName.resize(fileName.length() - 1);
+    fileName = regex_replace(fileName, regex("\\\\"), "/");
+    while (fileName.find("//") != string::npos)
+        fileName = regex_replace(fileName, regex("//"), "/");
+    if(!fileName.empty() && fileName.substr(0, 2) == "./")
+        fileName = fileName.substr(2);
+    bool removePath = ignorePath || fileName.find(':') != string::npos ||
+                      fileName.find("/./") != string::npos || fileName.find("/../") != string::npos ||
+                      fileName.substr(0, 3) == "../" || fileName[0] == '/';
+    finalPos = removePath ? fileName.find_last_of("/") + 1 : 0;
+    finalLen = fileName.length() - finalPos;
+    if (fileName.size() > 3 && fileName.substr(fileName.size() - 3, 3) == ".gz")
+        finalLen -= 3;
 }
 
 const size_t chunkSize = 10000000;
@@ -156,8 +192,6 @@ void PgHelpers::writeStringToFile(string destFile, const string &src) {
     writeArrayToFile(destFile, (void*) src.data(), src.length());
 }
 
-bool PgHelpers::plainTextWriteMode = false;
-
 void PgHelpers::writeReadMode(std::ostream &dest, bool plainTextWriteMode) {
     dest << (plainTextWriteMode?TEXT_MODE_ID:BINARY_MODE_ID) << "\n";
 }
@@ -171,24 +205,6 @@ bool PgHelpers::confirmTextReadMode(std::istream &src) {
     }
     char check = src.get();
     return readMode == TEXT_MODE_ID;
-}
-
-template<>
-void PgHelpers::writeValue(std::ostream &dest, const uint8_t value, bool plainTextWriteMode) {
-    if (plainTextWriteMode)
-        dest << (uint16_t) value << endl;
-    else
-        dest.write((char *) &value, sizeof(uint8_t));
-}
-
-template<>
-void PgHelpers::readValue(std::istream &src, uint8_t &value, bool plainTextReadMode) {
-    if (plainTextReadMode) {
-        uint16_t temp;
-        src >> temp;
-        value = (uint8_t) temp;
-    } else
-        src.read((char *) &value, sizeof(uint8_t));
 }
 
 void PgHelpers::writeUIntByteFrugal(std::ostream &dest, uint64_t value) {
@@ -211,20 +227,31 @@ void PgHelpers::writeUIntWordFrugal(std::ostream &dest, uint64_t value) {
     dest.write((char *) &yWord, sizeof(uint16_t));
 }
 
+void PgHelpers::writeUInt64Frugal(std::ostream &dest, uint64_t value) {
+    uint16_t yWord = value < UINT16_MAX ? value : UINT16_MAX;
+    dest.write((char *) &yWord, sizeof(uint16_t));
+    if (value >= UINT16_MAX) {
+        uint32_t y32 = value < UINT32_MAX ? value : UINT32_MAX;
+        dest.write((char *) &y32, sizeof(uint32_t));
+        if (value >= UINT32_MAX)
+            dest.write((char *) &value, sizeof(value));
+    }
+}
+
 bool PgHelpers::bytePerReadLengthMode = false;
 
-void PgHelpers::readReadLengthValue(std::istream &src, uint16_t &value, bool plainTextReadMode) {
+void PgHelpers::readReadLengthValue(std::istream &src, uint16_t &value) {
     if (bytePerReadLengthMode)
-        readValue<uint8_t>(src, (uint8_t&) value, plainTextReadMode);
+        readValue<uint8_t>(src, (uint8_t&) value);
     else
-        readValue<uint16_t>(src, value, plainTextReadMode);
+        readValue<uint16_t>(src, value);
 }
 
 void PgHelpers::writeReadLengthValue(std::ostream &dest, const uint16_t value) {
     if (bytePerReadLengthMode)
-        writeValue<uint8_t>(dest, (uint8_t) value, plainTextWriteMode);
+        writeValue<uint8_t>(dest, (uint8_t) value);
     else
-        writeValue<uint16_t>(dest, value, plainTextWriteMode);
+        writeValue<uint16_t>(dest, value);
 }
 
 string PgHelpers::toString(unsigned long long value) {
@@ -272,61 +299,82 @@ unsigned long long int PgHelpers::powuint(unsigned long long int base, int exp)
 struct LUT
 {
     char complementsLut[256];
-    char sym2val[256];
-    char val2sym[5];
+    char upperComplementsLut[256];
+
+    char* cLutPtr = complementsLut - CHAR_MIN;
+    char* uLutPtr = upperComplementsLut - CHAR_MIN;
 
     LUT() {
-        memset(complementsLut, 0, 256);
-        complementsLut['A'] = 'T'; complementsLut['a'] = 'T';
-        complementsLut['C'] = 'G'; complementsLut['c'] = 'G';
-        complementsLut['G'] = 'C'; complementsLut['g'] = 'C';
-        complementsLut['T'] = 'A'; complementsLut['t'] = 'A';
-        complementsLut['N'] = 'N'; complementsLut['n'] = 'N';
-        complementsLut['U'] = 'A'; complementsLut['u'] = 'A';
-        complementsLut['Y'] = 'R'; complementsLut['y'] = 'R';
-        complementsLut['R'] = 'Y'; complementsLut['r'] = 'Y';
-        complementsLut['K'] = 'M'; complementsLut['k'] = 'M';
-        complementsLut['M'] = 'K'; complementsLut['m'] = 'K';
-        complementsLut['B'] = 'V'; complementsLut['b'] = 'V';
-        complementsLut['D'] = 'H'; complementsLut['d'] = 'H';
-        complementsLut['H'] = 'D'; complementsLut['h'] = 'D';
-        complementsLut['V'] = 'B'; complementsLut['v'] = 'B';
-        val2sym[0] = 'A';
-        val2sym[1] = 'C';
-        val2sym[2] = 'G';
-        val2sym[3] = 'T';
-        val2sym[4] = 'N';
-        memset(sym2val, -1, 256);
-        for(char i = 0; i < 5; i++)
-            sym2val[val2sym[i]] = i;
+        for(int i = CHAR_MIN; i < CHAR_MAX; i++)
+            uLutPtr[i] = i;
+        uLutPtr['A'] = 'T'; uLutPtr['a'] = 'T';
+        uLutPtr['C'] = 'G'; uLutPtr['c'] = 'G';
+        uLutPtr['G'] = 'C'; uLutPtr['g'] = 'C';
+        uLutPtr['T'] = 'A'; uLutPtr['t'] = 'A';
+        uLutPtr['N'] = 'N'; uLutPtr['n'] = 'N';
+        uLutPtr['U'] = 'A'; uLutPtr['u'] = 'A';
+        uLutPtr['Y'] = 'R'; uLutPtr['y'] = 'R';
+        uLutPtr['R'] = 'Y'; uLutPtr['r'] = 'Y';
+        uLutPtr['K'] = 'M'; uLutPtr['k'] = 'M';
+        uLutPtr['M'] = 'K'; uLutPtr['m'] = 'K';
+        uLutPtr['B'] = 'V'; uLutPtr['b'] = 'V';
+        uLutPtr['D'] = 'H'; uLutPtr['d'] = 'H';
+        uLutPtr['H'] = 'D'; uLutPtr['h'] = 'D';
+        uLutPtr['V'] = 'B'; uLutPtr['v'] = 'B';
+        uLutPtr['W'] = 'S'; uLutPtr['w'] = 'S';
+        uLutPtr['S'] = 'W'; uLutPtr['s'] = 'W';
+        for(int i = CHAR_MIN; i < CHAR_MAX; i++)
+            cLutPtr[i] = uLutPtr[i];
+        cLutPtr['U'] = 'U';
+        cLutPtr['u'] = 'u';
+        cLutPtr['a'] = 't';
+        cLutPtr['c'] = 'g';
+        cLutPtr['g'] = 'c';
+        cLutPtr['t'] = 'a';
+        cLutPtr['n'] = 'n';
+        cLutPtr['y'] = 'r';
+        cLutPtr['r'] = 'y';
+        cLutPtr['k'] = 'm';
+        cLutPtr['m'] = 'k';
+        cLutPtr['b'] = 'v';
+        cLutPtr['d'] = 'h';
+        cLutPtr['h'] = 'd';
+        cLutPtr['v'] = 'b';
+        cLutPtr['w'] = 's';
+        cLutPtr['s'] = 'w';
+    }
+
+    void removeUpperWScomplements() {
+        upperComplementsLut['W'] = 'W'; upperComplementsLut['w'] = 'w';
+        upperComplementsLut['S'] = 'S'; upperComplementsLut['s'] = 's';
     }
 } instance;
 
-char* complementsLUT = instance.complementsLut;
-char* sym2val = instance.sym2val;
-char* val2sym = instance.val2sym;
+char* upperComplementsLUT = instance.uLutPtr;
+char* complementsLUT = instance.cLutPtr;
 
-uint8_t PgHelpers::symbol2value(char symbol) {
-    return sym2val[symbol];
+void PgHelpers::revertToMBGC121() {
+    instance.removeUpperWScomplements();
 }
 
-char PgHelpers::value2symbol(uint8_t value) {
-    return val2sym[value];
-}
-
-uint8_t PgHelpers::mismatch2code(char actual, char mismatch) {
-    uint8_t actualValue = symbol2value(actual);
-    uint8_t mismatchValue = symbol2value(mismatch);
-    return mismatchValue - (mismatchValue > actualValue?1:0);
-}
-
-char PgHelpers::code2mismatch(char actual, uint8_t code) {
-    uint8_t actualValue = symbol2value(actual);
-    return value2symbol(code < actualValue?code:(code+1));
+char PgHelpers::upperReverseComplement(char symbol) {
+    return upperComplementsLUT[symbol];
 }
 
 char PgHelpers::reverseComplement(char symbol) {
     return complementsLUT[symbol];
+}
+
+void PgHelpers::upperReverseComplementInPlace(char* start, const std::size_t N) {
+    char* left = start - 1;
+    char* right = start + N;
+    while (--right > ++left) {
+        char tmp = upperComplementsLUT[*left];
+        *left = upperComplementsLUT[*right];
+        *right = tmp;
+    }
+    if (left == right)
+        *left = upperComplementsLUT[*left];
 }
 
 void PgHelpers::reverseComplementInPlace(char* start, const std::size_t N) {
@@ -341,11 +389,28 @@ void PgHelpers::reverseComplementInPlace(char* start, const std::size_t N) {
         *left = complementsLUT[*left];
 }
 
+void PgHelpers::upperReverseComplement(const char* start, const std::size_t N, char* target) {
+    char* right = target + N;
+    while (right-- > target) {
+        *right = upperComplementsLUT[*(start++)];
+    }
+}
+
 void PgHelpers::reverseComplement(const char* start, const std::size_t N, char* target) {
     char* right = target + N;
     while (right-- > target) {
         *right = complementsLUT[*(start++)];
     }
+}
+
+string PgHelpers::upperReverseComplement(string kmer) {
+    size_t kmer_length = kmer.size();
+    string revcomp;
+    revcomp.resize(kmer_length);
+    size_t j = kmer_length;
+    for(size_t i = 0; i < kmer_length; i++)
+        revcomp[--j] = upperComplementsLUT[kmer[i]];
+    return revcomp;
 }
 
 string PgHelpers::reverseComplement(string kmer) {
@@ -358,8 +423,20 @@ string PgHelpers::reverseComplement(string kmer) {
     return revcomp;
 }
 
+void PgHelpers::upperReverseComplementInPlace(string &kmer) {
+    upperReverseComplementInPlace((char *) kmer.data(), kmer.length());
+}
+
 void PgHelpers::reverseComplementInPlace(string &kmer) {
-    reverseComplementInPlace((char*) kmer.data(), kmer.length());
+    reverseComplementInPlace((char *) kmer.data(), kmer.length());
+}
+
+void PgHelpers::upperSequence(char* start, const std::size_t N) {
+    char* left = start - 1;
+    char* guard = start + N;
+    while (++left < guard) {
+        *left = toupper(*left);
+    }
 }
 
 double PgHelpers::qualityScore2approxCorrectProb(string quality) {

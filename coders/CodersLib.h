@@ -12,6 +12,7 @@ extern int dump_after_decompression_counter;
 extern string dump_after_decompression_prefix;
 #endif
 
+const static uint8_t NO_CODER = 0;
 const static uint8_t LZMA_CODER = 1;
 const static uint8_t LZMA2_CODER = 2;
 const static uint8_t PPMD7_CODER = 3;
@@ -66,8 +67,10 @@ void writeCompressed(ostream &dest, const string& srcStr, CoderProps* props, dou
 
 void Uncompress(unsigned char* dest, size_t destLen, istream &src, size_t srcLen, uint8_t coder_type,
         ostream* logout = PgHelpers::devout);
-void Uncompress(unsigned char* dest, size_t destLen, string& src, size_t srcLen, uint8_t coder_type);
-void readCompressed(istream &src, string& dest);
+void Uncompress(unsigned char* dest, size_t destLen, unsigned char* src, size_t srcLen, uint8_t coder_type,
+        ostream* logout = PgHelpers::devout);
+void readCompressed(istream &src, string& dest, ostream* logout = PgHelpers::devout);
+void readCompressed(unsigned char *src, string& dest, ostream* logout = PgHelpers::devout);
 
 class CompoundCoderProps: public CoderProps {
 public:
@@ -99,10 +102,10 @@ public:
 
 template<typename T>
 void readCompressed(istream &src, vector<T>& dest) {
-    size_t destLen = 0;
-    size_t srcLen = 0;
+    uint64_t destLen = 0;
+    uint64_t srcLen = 0;
     uint8_t coder_type = 0;
-    PgHelpers::readValue<uint64_t>(src, destLen, false);
+    PgHelpers::readValue<uint64_t>(src, destLen);
     if (destLen % sizeof(T)) {
         fprintf(stderr, "Invalid output size %zu for decompressing to the vector of %zu-byte elements",
                 destLen, sizeof(T));
@@ -110,8 +113,8 @@ void readCompressed(istream &src, vector<T>& dest) {
     dest.resize(destLen / sizeof(T));
     if (destLen == 0)
         return;
-    PgHelpers::readValue<uint64_t>(src, srcLen, false);
-    PgHelpers::readValue<uint8_t>(src, coder_type, false);
+    PgHelpers::readValue<uint64_t>(src, srcLen);
+    PgHelpers::readValue<uint8_t>(src, coder_type);
     Uncompress((unsigned char*) dest.data(), destLen, src, srcLen, coder_type);
 #ifdef DEVELOPER_BUILD
     if (dump_after_decompression) {
@@ -160,7 +163,7 @@ public:
 int parallelBlocksCompress(unsigned char *&dest, size_t &destLen, const unsigned char *src, size_t srcLen,
                              ParallelBlocksCoderProps* props, double estimated_compression = 1,
                              ostream* logout = PgHelpers::devout);
-int parallelBlocksDecompress(unsigned char *dest, size_t *destLen, istream &src, size_t *srcLen,
+int parallelBlocksDecompress(unsigned char *dest, size_t *destLen, unsigned char *src, size_t *srcLen,
         ostream* logout = PgHelpers::devout);
 
 class CompressionJob {

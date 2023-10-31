@@ -6,27 +6,39 @@
 #include "../utils/helper.h"
 #include "../matching/SlidingWindowSparseEMMatcher.h"
 #include "MBGC_Params.h"
+#include "../coders/ContextAwareMismatchesCoder.h"
+#include "MBGC_Decoder.h"
+#include <unordered_set>
 
 class MBGC_Encoder {
 private:
     MBGC_Params *params;
+    static constexpr timespec SLEEP_TIME[] {{0, 100L}};
 
     SlidingWindowSparseEMMatcher* matcher;
 
-    ostringstream seqsCountDest;
+    ContextAwareMismatchesCoder* mismatchesCoder = &ContextAwareMismatchesCoder::defaultInstance;
 
-    int rcStart;
+    ostringstream seqsCountsDest, dnaLineLengthsDest;
+
+    uint64_t refG0InitPos;
 #ifdef DEVELOPER_BUILD
-    int32_t currentRefExtGoal;
-    uint32_t refExtLengthPerFile;
+    int64_t currentRefExtGoal;
+    uint64_t refExtLengthPerFile;
 #endif
     uint64_t refFinalTotalLength;
+    uint8_t refBuffersCount = 1;
     uint32_t filesCount = 0;
+    bool singleFastaFileMode;
     uint32_t targetsCount = 0;
-    size_t totalFilesLength = 0;
+    int targetsShift = 1;
+    uint64_t totalFilesLength = 0;
     uint32_t largestRefContigSize = 0;
     uint32_t largestContigSize = 0;
-    uint32_t largestFileLength = 0;
+    uint64_t largestFileLength = 0;
+
+    uint32_t appendedFilesCount = 0;
+    uint32_t appendedTargetsCount = 0;
 
     string headersStr;
     string headersTemplates;
@@ -36,10 +48,13 @@ private:
     size_t resCount = 0;
     string locksPosStream;
     string mapOffStream;
-    string mapOff5thByteStream;
     string mapLenStream;
+    string singularGapFlagsStream;
+    string gapFlagsStream;
+    string gapMismatchesFlagsStream;
 
     vector<string> fileNames;
+    unordered_set<string> fileNamesSet;
     vector<string> fileHeadersTemplates;
     vector<string> fileHeaders;
 
@@ -47,30 +62,55 @@ private:
     vector<string> targetRefExtensions;
     vector<string> targetLiterals;
     vector<ostringstream> targetMapOffDests;
-    vector<ostringstream> targetMapOff5thByteDests;
+    vector<string> targetMapOff5thByte;
     vector<ostringstream> targetMapLenDests;
-    vector<uint32_t> targetSeqsCounts;
+    vector<string> targetGapDeltas;
+    vector<string> targetGapMismatchesFlags;
+    vector<uint32_t> seqsCounts;
+    vector<uint64_t> dnaLineLength;
     vector<size_t> matchingLocksPos;
+    ostringstream refExtSizeDest;
+    vector<size_t> refExtLoadedPosArr;
 
-    bool compressToStdout();
+    vector<vector<string>*> usedByteStreams;
+    void enrollByteStream(vector<string>& stream) {
+        usedByteStreams.push_back(&stream);
+    }
+    vector<pair<string&, vector<ostringstream>&>> usedStreamsWithDests;
+    void enrollStream(string& stream, vector<ostringstream>& dests) {
+        usedStreamsWithDests.emplace_back(pair<string& , vector<ostringstream>&>(stream, dests));
+    }
 
     void processFileName(string &fileName);
     void updateHeadersTemplate(uint32_t fileIndex, const string& header);
     void processHeader(uint32_t fileIndex, const string &header);
 
-    void loadRef(string& refName);
-    void appendRef(string& refExtRes, const char* extPtr, size_t length);
+    void loadG0Ref(string& refName);
+    void initMatcher(const char* refStrPtr, const size_t refStrSize, size_t basicRefLength);
+
+    size_t getMatchLoadedPos(size_t pos);
 
     void processLiteral(char *destPtr, uint32_t pos, uint64_t length, size_t destLen, string &refExtRes);
-    size_t processMatches(vector<PgTools::TextMatch>& textMatches, char *destPtr, size_t destLen, int i);
+    size_t processMatches(vector<PgTools::TextMatch>& textMatches, char *destStart, size_t destLen, int targetIdx,
+        size_t matchingLockPos = SIZE_MAX);
+    uint64_t extendMatchLeft(const char *destStart, uint64_t length, const TextMatch &match,
+                         int targetIdx, size_t matchingLockPos,
+                         uint32_t &extensionsMatchedChars, uint32_t &extensionsMismatches);
 
-    void applyTemplatesToHeaders();
+    uint64_t extendMatchRight(const char *gapStartPtr, const TextMatch &coreMatch, const TextMatch &match,
+                              uint64_t &length, int targetIdx, bool isGap, bool gapStart, bool gapMiddle, bool gapEnd,
+                              uint32_t &extensionsMatchedChars, uint32_t &extensionsMismatches);
 
-    size_t prepareAndCompressStreams();
-    void writeParamsAndStats(ostream &out) const;
+    void performMatching();
 
-    int claimedTargetsCount;
-    int64_t processedTargetsCount;
+    void applyTemplateToHeaders(uint32_t fileIdx);
+    void prepareHeadersStreams();
+    void prepareAndCompressStreams();
+    void writeStats(ostream &out) const;
+
+    int claimedTargetsCount = 0;
+    int64_t processedTargetsCount = 0;
+    int allowedTargetsOutrun = INT32_MAX;
 
     uint32_t masterTargetsStats = 0;
     uint32_t taskTargetsStats = 0;
@@ -86,18 +126,28 @@ private:
     void loadFileNames();
     void initParallelEncoding();
     void finalizeParallelEncodingInSingleFastaFileMode();
-    inline void encodeTargetSequence(int i);
-    inline int finalizeParallelEncodingOfTarget();
+    inline void encodeTargetSequence(int i, bool calledByMaster);
+    inline int finalizeParallelEncodingOfTarget(bool calledByMaster);
     void tryClaimAndProcessTarget(bool calledByMaster);
     void encodeTargetsWithParallelIO();
     void encodeTargetsParallel();
     void encodeTargetsBruteParallel();
+
+    template<bool lazyMode>
+    void appendTemplate(MBGC_Decoder<lazyMode>* decoder, MBGC_Params& newParams);
+
+    template<bool lazyMode>
+    void repackTemplate(MBGC_Decoder<lazyMode>* decoder);
 
 public:
 
     explicit MBGC_Encoder(MBGC_Params *mbgcParams);
 
     void encode();
+
+    void append(MBGC_Params& newParams);
+
+    void repack(MBGC_Params& inParams);
 
 };
 

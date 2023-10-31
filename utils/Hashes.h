@@ -20,9 +20,9 @@ inline std::uint32_t xxhash64(const char* key) {
 	return (std::uint32_t)(result);
 }
 
-unsigned long long resultMH64 = 0ULL;
 template <size_t K>
 inline std::uint32_t metroHash64(const char* key) {
+    unsigned long long resultMH64 = 0ULL;
 	MetroHash64::Hash((const uint8_t*)key, K, (uint8_t*)(&resultMH64), 9876543210ULL);
 	return (std::uint32_t)(resultMH64);
 }

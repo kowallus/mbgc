@@ -10,9 +10,12 @@ namespace PgTools {
         uint64_t posSrcText;
         uint64_t length;
         uint64_t posDestText;
+        uint64_t nextSrcRegionLoadingPos;
 
-        TextMatch(uint64_t posSrcText, uint64_t length, uint64_t posDestText) : posSrcText(posSrcText), length(length),
-                                                                                posDestText(posDestText) {}
+        TextMatch(uint64_t posSrcText, uint64_t length, uint64_t posDestText) :
+                posSrcText(posSrcText), length(length), posDestText(posDestText), nextSrcRegionLoadingPos(0)  {}
+
+        TextMatch() : TextMatch(0, 0, 0) {};
 
         bool operator==(const TextMatch &rhs) const {
             return posSrcText == rhs.posSrcText &&
@@ -36,6 +39,27 @@ namespace PgTools {
             return length < rhs.length;
         }
 
+        bool pairedWith(const TextMatch &rhs) const {
+            return posSrcText + rhs.posDestText == rhs.posSrcText + posDestText;
+        }
+
+        bool pairedWith(const TextMatch &rhs, size_t pairBreakSrcPos) const {
+            return posSrcText + rhs.posDestText == rhs.posSrcText + posDestText &&
+                    ((posSrcText > pairBreakSrcPos && rhs.posSrcText > pairBreakSrcPos) ||
+                            (posSrcText < pairBreakSrcPos && rhs.posSrcText < pairBreakSrcPos));
+        }
+
+        const static int8_t NOT_PAIRED_WITH_INDEL = INT8_MAX;
+
+        int8_t pairedWithIndel(const TextMatch &rhs, int8_t maxIndel) const {
+            int64_t delta = (int64_t) posSrcText - (int64_t) posDestText;
+            int64_t rhsDelta = (int64_t) rhs.posSrcText - (int64_t) rhs.posDestText;
+            int64_t indel = rhsDelta - delta;
+            if (indel >= -maxIndel && indel <= maxIndel)
+                return indel;
+            return NOT_PAIRED_WITH_INDEL;
+        }
+
         uint64_t endPosSrcText() const {
             return posSrcText + length;
         }
@@ -44,8 +68,15 @@ namespace PgTools {
             return posDestText + length;
         }
 
+        void shiftStartPos(int64_t shift) {
+            this->posSrcText += shift;
+            this->posDestText += shift;
+            this->length -= shift;
+        }
+
         void report(ostream &out) {
-            out << length << ": <" << posSrcText << ", " << endPosSrcText() << ") in " << posDestText << endl;
+            out << length << ":<" << posSrcText << ", " << endPosSrcText() << ") in " <<
+                posDestText << endl;
         }
     };
 
@@ -54,9 +85,6 @@ namespace PgTools {
     public:
         virtual void matchTexts(vector<TextMatch> &resMatches, const string &destText, bool destIsSrc, bool revComplMatching,
                                 uint32_t minMatchLength) = 0;
-
-        virtual void matchTexts(vector<TextMatch> &resMatches, const char* destText, size_t destLen, bool destIsSrc,
-                        bool revComplMatching, uint32_t minMatchLength) = 0;
 
         virtual ~TextMatcher() {};
 

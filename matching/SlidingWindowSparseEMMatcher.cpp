@@ -54,6 +54,8 @@ const uint64_t NOT_MATCHED_POSITION = UINT64_MAX;
 #define INIT_HASH_FUNC(n) hashFuncMatrix[n][1] = maRushPrime1HashSimplified<n>; hashFuncMatrix[n][2] = xxhash32<n>; hashFuncMatrix[n][3] = maRushPrime1HashSparsified<n>;hashFuncMatrix[n][4] = metroHash64<n>; hashFuncMatrix[n][5] = cityHash64<n>;
 string hashNames[] = { "(?)", "maRushPrime1HashSimplified", "xxhash32", "maRushPrime1HashSparsified", "metroHash64", "cityHash64"};
 void SlidingWindowSparseEMMatcher::initHashFuncMatrix() {
+    INIT_HASH_FUNC(12);
+    INIT_HASH_FUNC(16);
     INIT_HASH_FUNC(20);
     INIT_HASH_FUNC(24);
     INIT_HASH_FUNC(28);
@@ -77,7 +79,7 @@ void SlidingWindowSparseEMMatcher::initParams(uint32 minMatchLength, int _k1, in
     else if (L > 42) K = 32;
     else if (L > 32) K = 28;
     else K = (L / 4 - 1) * 4;
-    if (minMatchLength < 24) {
+    if (minMatchLength < MIN_MATCH_LENGTH) {
         cerr << "Error: Minimal matching length too short!" << endl;
         exit(EXIT_FAILURE);
     }
@@ -102,13 +104,13 @@ void SlidingWindowSparseEMMatcher::initParams(uint32 minMatchLength, int _k1, in
 }
 
 void SlidingWindowSparseEMMatcher::displayParams() {
-	*PgHelpers::appout << "SparseEM PARAMETERS: ";
-	*PgHelpers::appout << "k-mer exact match length = " << L << "; ";
-	*PgHelpers::appout << "hash pattern length = " << K << "; ";
-	*PgHelpers::appout << "HASH_SIZE = " << hash_size << "; ";
-	*PgHelpers::appout << "k1 = " << k1 << "; ";
-	*PgHelpers::appout << "k2 = " << k2 << "; ";
-    *PgHelpers::appout << "skipMargin = " << skipMargin << std::endl;
+	*PgHelpers::devout << "SparseEM PARAMETERS: ";
+	*PgHelpers::devout << "k-mer exact match length = " << L << "; ";
+	*PgHelpers::devout << "hash pattern length = " << K << "; ";
+	*PgHelpers::devout << "HASH_SIZE = " << hash_size << "; ";
+	*PgHelpers::devout << "k1 = " << k1 << "; ";
+	*PgHelpers::devout << "k2 = " << k2 << "; ";
+    *PgHelpers::devout << "skipMargin = " << skipMargin << std::endl;
 	*PgHelpers::devout << "Hash function: " << hashNames[H] << std::endl;
     *PgHelpers::devout << "Hash bin size: 1" << std::endl;
 }
@@ -141,65 +143,56 @@ void SlidingWindowSparseEMMatcher::calcCoprimes()
     }
 }
 
-template<typename MyUINT1, typename MyUINT2>
-void SlidingWindowSparseEMMatcher::processIgnoreCollisionsRef(HashBuffer<MyUINT1, MyUINT2>& buffer) {
+template<typename uint_ht_t>
+void SlidingWindowSparseEMMatcher::processIgnoreCollisionsRef(uint_ht_t* ht, size_t& refSamplingPos, int64_t& refPos1) {
     const unsigned int MULTI2 = 128;
     const unsigned int k1MULTI2 = k1 * MULTI2;
 
-    MyUINT1* sampledPositions = buffer.first;
-
     #pragma omp parallel for
-    for (int64_t i1 = samplingPos; i1 < (pos1 - K) - k1MULTI2; i1 += k1MULTI2) {
+    for (int64_t i1 = refSamplingPos; i1 < (refPos1 - K) - k1MULTI2; i1 += k1MULTI2) {
         uint32_t hashPositions[MULTI2];
         size_t i2 = i1;
         for (unsigned int temp = 0; temp < MULTI2; ++temp, i2 += k1) {
             hashPositions[temp] = hashFunc(start1 + htRePos(i2));
-            _prefetch((char*)(sampledPositions + hashPositions[temp]), 1);
+            _prefetch((char*)(ht + hashPositions[temp]), 1);
         }
 
         i2 = i1;
         for (size_t temp = 0; temp < MULTI2; ++temp, i2 += k1) {
-            sampledPositions[hashPositions[temp]] = this->htEncodePos(i2);
+            ht[hashPositions[temp]] = this->htEncodePos(i2);
         }
     }
     //////////////////// processing the end part of R
     int64_t i1;
-    for (i1 = k1 + ((pos1 - K - 1) / k1MULTI2) * k1MULTI2; i1 < pos1 - K + 1; i1 += k1) {
-        sampledPositions[hashFunc(start1 + htRePos(i1))] = this->htEncodePos(i1);
+    for (i1 = k1 + ((refPos1 - K - 1) / k1MULTI2) * k1MULTI2; i1 < refPos1 - K + 1; i1 += k1) {
+        ht[hashFunc(start1 + htRePos(i1))] = this->htEncodePos(i1);
     }
-    samplingPos = i1;
+    refSamplingPos = i1;
 }
 
-template <class MyUINT1, class MyUINT2>
-void SlidingWindowSparseEMMatcher::deleteHashBuffer(HashBuffer<MyUINT1, MyUINT2> & buf) {
-    delete[] buf.first;
-    delete[] buf.second;
-}
-
-template<typename MyUINT1, typename MyUINT2>
+template<typename uint_ht_t>
 void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTightTemplate(
-        HashBuffer<MyUINT1, MyUINT2> buffer, vector<TextMatch> &resMatches, const char *start2, size_t N2,
+        uint_ht_t* ht, vector<TextMatch> &resMatches, const char *start2, size_t N2,
         bool destIsRef, bool revComplMatching, uint32_t minMatchLength, size_t matchingLockPos) {
-    processExactMatchQueryIgnoreCollisionsTight<MyUINT1, MyUINT2, true>(buffer, resMatches,
-            start2, N2, destIsRef, revComplMatching, minMatchLength, matchingLockPos);
+    processExactMatchQueryIgnoreCollisionsTight<uint_ht_t, true>(ht, resMatches,
+                                            start2, N2, destIsRef, revComplMatching, minMatchLength, matchingLockPos);
 }
 
-template<typename MyUINT1, typename MyUINT2, bool checkOverlaps>
-void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTight(HashBuffer<MyUINT1, MyUINT2> buffer,
-           vector<TextMatch> &resMatches, const char* start2, size_t N2, bool destIsRef, bool revComplMatching,
-           uint32_t minMatchLength, size_t matchingLockPos) {
+template<typename uint_ht_t, bool checkOverlaps>
+void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTight(uint_ht_t* ht,
+                vector<TextMatch> &resMatches, const char* start2, size_t N2, bool destIsRef, bool revComplMatching,
+                uint32_t minMatchLength, size_t matchingLockPos) {
     if (destIsRef || revComplMatching) {
         fprintf(stderr, "Source as destination and reverse-complement matching modes unsupported\n\n");
         exit(EXIT_FAILURE);
     }
 
-    MyUINT1* sampledPositions = buffer.first;
-    MyUINT2 posArray;
+    uint32_t posArray;
 
     std::uint32_t l1 = 0, l2 = 0, r1 = 0, r2 = 0;
 
     size_t charExtensions = 0ULL;
-
+    vector<TextMatch> replacedMatches;
     int64_t i2 = 0;
     const char* end2 = start2 + N2;
     const char* curr2 = start2 + i2;
@@ -210,23 +203,23 @@ void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTight(H
         if (curr2 - LK2 >= start2) memcpy(&l2, curr2 - LK2, sizeof(std::uint32_t));
         if (curr2 + K_PLUS_LK24 + sizeof(std::uint32_t) <= end2) memcpy(&r2, curr2 + K_PLUS_LK24, sizeof(std::uint32_t));
 
-        MyUINT1 j = posArray;
+        uint32_t j = posArray;
         ++charExtensions;
-        if (sampledPositions[j] == 0)
+        if (ht[j] == 0)
             continue;
 
-        const char* curr1 = start1 + this->htDecodePos(sampledPositions[j]);
+        const char* curr1 = start1 + this->htDecodePos(ht[j]);
         const char* swStart = start1 + pos1;
         const char* swStop = start1 + (matchingLockPos != SW_END_ERASED_FLAG ? matchingLockPos : pos1);
-        bool matchBeforeSwStart = curr1 < swStart;
-        bool matchBeforeSwStop = curr1 < swStop;
+        bool matchEndsBeforeSwStart = curr1 + K < swStart;
+        bool matchStartsBeforeSwStop = curr1 < swStop;
         if (swStart <= swStop) {
-            if (!matchBeforeSwStart && matchBeforeSwStop)
+            if (!matchEndsBeforeSwStart && matchStartsBeforeSwStop)
                 continue;
-        } else if (!matchBeforeSwStart || matchBeforeSwStop)
+        } else if (!matchEndsBeforeSwStart || matchStartsBeforeSwStop)
             continue;
-        const char* tmpEnd1 = matchBeforeSwStart ? swStart : start1 + this->getRefLength();
-        const char* tmpStart1 = matchBeforeSwStop ? start1 : swStop;
+        const char* tmpEnd1 = matchEndsBeforeSwStart ? swStart : start1 + this->getRefLength();
+        const char* tmpStart1 = matchStartsBeforeSwStop ? start1 : swStop;
         memcpy(&l1, curr1 - LK2, sizeof(std::uint32_t));
         memcpy(&r1, curr1 + K_PLUS_LK24, sizeof(std::uint32_t));
 
@@ -249,51 +242,76 @@ void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTight(H
             }
             p1--; p2--;
             while (++p1 != tmpEnd1 && ++p2 != end2 && *p1 == *p2);
-            const char *right = p1;
+            const char *right1 = p1;
+            const char *right2 = p2;
             p1 = curr1;
             p2 = curr2;
 
+            const int PAIRED_MATCH_LENGTH_LOSS_LIMIT = 0; // 0 - DISABLED
+            int64_t resSizeWithoutOverlapped = resMatches.size();
             if (checkOverlaps) {
-                while (!resMatches.empty()) {
-                    const TextMatch& lastMatch = resMatches.back();
+                while (resSizeWithoutOverlapped--) {
+                    const TextMatch& lastMatch = resMatches[resSizeWithoutOverlapped];
                     if (lastMatch.endPosDestText() < p2 - start2) {
                         const char* tmpguard2 = start2 + lastMatch.endPosDestText();
-                        while (p1 != tmpStart1 && p2 > tmpguard2 - 1 && *--p1 == *--p2);
+                        while (p1 != tmpStart1 && p2 > tmpguard2 - 1 && *p1 == *p2) {
+                            p1--; p2--;
+                        }
                         if (p2 > tmpguard2 - 1)
                             break;
                         p1++; p2++;
                     }
                     int64_t lastDelta = (p2 - start2) - lastMatch.posDestText;
-                    if (p1 - start1 < lastDelta || lastMatch.length > OVERLAP_MATCH_MAX_LENGTH ||
+                    if (p1 - tmpStart1 < lastDelta || lastMatch.length > OVERLAP_MATCH_MAX_LENGTH ||
                         PgHelpers::strcmplcp(p2 - lastDelta, p1 - lastDelta, lastDelta) != 0) {
                         p1--; p2--;
                         break;
                     }
                     p2 -= lastDelta; p1 -= lastDelta;
-                    resMatches.pop_back();
+                    if (PAIRED_MATCH_LENGTH_LOSS_LIMIT && !replacedMatches.empty() &&
+                        (right2 - p2 - 1) - replacedMatches.back().length >= PAIRED_MATCH_LENGTH_LOSS_LIMIT)
+                        replacedMatches.clear();
                 }
-                if (resMatches.empty())
-                    while (p1 != tmpStart1 && p2 > guard2 - 1 && *--p1 == *--p2);
-                else {
-                    int64_t overlap = ((int64_t) resMatches.back().endPosDestText()) - (p2 + 1 - start2);
+                if (PAIRED_MATCH_LENGTH_LOSS_LIMIT && resSizeWithoutOverlapped + 2 < resMatches.size())
+                    replacedMatches.clear();
+                if (resSizeWithoutOverlapped < 0) {
+                    while (p1 != tmpStart1 && p2 > guard2 - 1 && *p1 == *p2) {
+                        p1--; p2--;
+                    }
+                } else {
+                    if (PAIRED_MATCH_LENGTH_LOSS_LIMIT && resSizeWithoutOverlapped + 1 < resMatches.size() && resMatches[resSizeWithoutOverlapped + 1].pairedWith(resMatches[resSizeWithoutOverlapped]))
+                        if ((right2 - p2 - 1) - resMatches[resSizeWithoutOverlapped + 1].length < PAIRED_MATCH_LENGTH_LOSS_LIMIT)
+                            replacedMatches.push_back(resMatches[resSizeWithoutOverlapped + 1]);
+                    int64_t overlap = ((int64_t) resMatches[resSizeWithoutOverlapped].endPosDestText()) - (p2 + 1 - start2);
                     if (overlap > 0) {
                         p1 += overlap;
                         p2 += overlap;
                     }
                 }
+                ++resSizeWithoutOverlapped;
             } else {
-                while (p1 != tmpStart1 && p2 > guard2 - 1 && *--p1 == *--p2);
+                while (p1 != tmpStart1 && p2 > guard2 - 1 && *p1 == *p2) {
+                    p1--; p2--;
+                }
 //                while (p2 < guard2 - 1) { p1++; p2++; } // to definitely remove overlapping matches
             }
-            if (right - p1 > minMatchLength && memcmp(curr1, curr2, K) == 0) {
-                resMatches.push_back(TextMatch(p1 + 1 - start1, right - p1 - 1, p2 + 1 - start2));
-                int skip = ((p2 - start2 + right - p1) - (curr2 - start2)) / k2 * k2;
+            if (right1 - p1 > minMatchLength && memcmp(curr1, curr2, K) == 0) {
+                resMatches.resize(resSizeWithoutOverlapped);
+                resMatches.push_back(TextMatch(p1 + 1 - start1, right1 - p1 - 1, p2 + 1 - start2));
+                if (!replacedMatches.empty() && resMatches.size() > 1 &&
+                    resMatches.back().posDestText > replacedMatches.back().endPosDestText()) {
+                    int64_t m = resMatches.size() - 2;
+                    if (!resMatches.back().pairedWith(resMatches[m]))
+                        resMatches[m] = replacedMatches.back();
+                    replacedMatches.clear();
+                }
+                int skip = ((p2 - start2 + right1 - p1) - (curr2 - start2)) / k2 * k2;
                 skip -= skip > skipMargin ? skipMargin : skip;
                 if (skip) {
                     curr2 += skip - k2;
                     i2 += skip - k2;
                 }
-                if (!checkOverlaps) guard2 = p2 + (right - p1); // to avoid large overlaps
+                if (!checkOverlaps) guard2 = p2 + (right1 - p1); // to avoid large overlaps
             }
 
         }
@@ -304,14 +322,18 @@ void SlidingWindowSparseEMMatcher::processExactMatchQueryIgnoreCollisionsTight(H
 
 using namespace std;
 
-SlidingWindowSparseEMMatcher::SlidingWindowSparseEMMatcher(const size_t refLengthLimit, const uint32_t targetMatchLength,
+SlidingWindowSparseEMMatcher::SlidingWindowSparseEMMatcher(const size_t refLengthLimit,
+                                                           const uint32_t targetMatchLength,
                                                            int _k1, int _k2, int skipMargin, uint32_t minMatchLength,
                                                            bool skipHtInit)
-    : maxRefLength(refLengthLimit), L(targetMatchLength), skipMargin(skipMargin) {
-    size_t allocSize = PgHelpers::safeNewArrayAlloc(start1, this->maxRefLength, false, TOTAL_RAM_REF_LIMIT_PERCENT);
+        : maxRefLength(refLengthLimit), L(targetMatchLength), skipMargin(skipMargin) {
+    size_t allocSize;
+    allocSize = PgHelpers::safeNewArrayAlloc(start1, this->maxRefLength, false,
+                                                    TOTAL_RAM_REF_LIMIT_PERCENT);
     if (this->maxRefLength != allocSize)
         this->maxRefLength = allocSize;
     start1[0] = 0;
+
     pos1 = REF_SHIFT;
     swEnd = this->maxRefLength;
     setSlidingWindowSize(SW_WIDTH_FACTOR);
@@ -323,12 +345,11 @@ SlidingWindowSparseEMMatcher::SlidingWindowSparseEMMatcher(const size_t refLengt
     if (skipHtInit)
         return;
     if (refLengthLimit >= (1ULL << 32)) {
-        bigRef = 1;  // large Reference
-        allocSize = PgHelpers::safeNewArrayAlloc<uint64_t>(buffer1.first, hash_size, true);
+        ht64bitFlag = true;  // huge Reference
+        allocSize = PgHelpers::safeNewArrayAlloc<uint64_t>(ht64bit, hash_size, true);
         *v1logger << "WARNING - BIG reference file (>4GB), 64-bit arrays\n";
     } else {
-        bigRef = 0;  // small Reference
-        allocSize = PgHelpers::safeNewArrayAlloc<uint32_t>(buffer0.first, hash_size, true);
+        allocSize = PgHelpers::safeNewArrayAlloc<uint32_t>(ht32bit, hash_size, true);
     }
     if (hash_size != allocSize) {
         hash_size = allocSize;
@@ -338,8 +359,8 @@ SlidingWindowSparseEMMatcher::SlidingWindowSparseEMMatcher(const size_t refLengt
 }
 
 size_t SlidingWindowSparseEMMatcher::acquireWorkerMatchingLockPos() {
-    if (swSize == 0)
-        return this->maxRefLength;
+    if (swSize == 0 || !circularBuffer)
+        return swEnd;
     size_t workerSwEndPos;
     #pragma omp critical(workerLocksManagement)
     {
@@ -357,7 +378,7 @@ size_t SlidingWindowSparseEMMatcher::acquireWorkerMatchingLockPos() {
 }
 
 void SlidingWindowSparseEMMatcher::releaseWorkerMatchingLockPos(size_t lockValue) {
-    if (swSize == 0)
+    if (swSize == 0 || !circularBuffer)
         return;
     #pragma omp critical(workerLocksManagement)
     {
@@ -378,40 +399,69 @@ void SlidingWindowSparseEMMatcher::releaseWorkerMatchingLockPos(size_t lockValue
     }
 }
 
-void SlidingWindowSparseEMMatcher::loadRef(const char *refText, size_t refLength) {
+size_t SlidingWindowSparseEMMatcher::loadRef(const char *refText, size_t refLength, size_t& refSamplingPos,
+                                           int64_t& refPos1, bool rcRef, bool addRegionSeparators,
+                                           char regionSeparator) {
     if (refLength == 0)
-        return;
-    if (pos1 == this->maxRefLength && swEnd != this->maxRefLength) {
+        return 0;
+    if (refPos1 == this->maxRefLength && swEnd != this->maxRefLength) {
         reachedRefLengthCount++;
-        pos1 = REF_SHIFT;
+        refPos1 = REF_SHIFT;
+        samplingPos = REF_SHIFT;
     }
     size_t tmpEnd = swEnd;
     size_t tmpLength = refLength;
-    size_t tmpMax = tmpEnd < pos1 ? maxRefLength : tmpEnd;
-    if (pos1 + tmpLength > tmpMax) {
-        tmpLength = tmpMax - pos1;
+    size_t tmpMax = tmpEnd < refPos1 ? maxRefLength : tmpEnd;
+    if (refPos1 + tmpLength > tmpMax) {
+        tmpLength = tmpMax - refPos1;
     }
-    A_memcpy(start1 + pos1, refText, tmpLength);
-    pos1 += tmpLength;
-    if (bigRef == 1) {
-        processIgnoreCollisionsRef<std::uint64_t, std::uint32_t>(buffer1);
+    if (rcRef) {
+        PgHelpers::upperReverseComplement(refText + refLength - tmpLength, tmpLength, start1 + refPos1);
+    } else
+        A_memcpy(start1 + refPos1, refText, tmpLength);
+    if (addRegionSeparators && refPos1 + tmpLength == swEnd)
+        start1[swEnd - 1] = regionSeparator;
+    refPos1 += tmpLength;
+
+    if (ht64bitFlag) {
+        processIgnoreCollisionsRef<std::uint64_t>(ht64bit, refSamplingPos, refPos1);
     } else {
-        processIgnoreCollisionsRef<uint32_t, uint32_t>(buffer0);
+        processIgnoreCollisionsRef<std::uint32_t>(ht32bit, refSamplingPos, refPos1);
     }
 
-    refText += tmpLength;
-    refLength = pos1 == tmpEnd ? 0 : refLength - tmpLength;
+    refText += rcRef ? 0 : tmpLength;
+    refLength = refPos1 == tmpEnd ? 0 : refLength - tmpLength;
 
-    this->loadRef(refText, refLength);
+    return tmpLength + this->loadRef(refText, refLength, refSamplingPos, refPos1, rcRef, addRegionSeparators,
+                                     regionSeparator);
+}
+
+void SlidingWindowSparseEMMatcher::loadSeparator(char regionSeparator) {
+    if (pos1 == this->maxRefLength && swEnd != this->maxRefLength) {
+        reachedRefLengthCount++;
+        pos1 = REF_SHIFT;
+        samplingPos = REF_SHIFT;
+    }
+    if (pos1 == this->maxRefLength)
+        return;
+    if (pos1 == swEnd) {
+        start1[pos1 - 1] = regionSeparator;
+    } else
+        start1[pos1++] = regionSeparator;
+}
+
+void SlidingWindowSparseEMMatcher::loadRef(const char *refText, size_t refLength, bool loadRCRef,
+                                           bool addRegionSeparators, char regionSeparator) {
+    this->loadRef(refText, refLength, samplingPos, pos1, false, addRegionSeparators, regionSeparator);
+    if (loadRCRef)
+        this->loadRef(refText, refLength, samplingPos, pos1, true, addRegionSeparators, regionSeparator);
 }
 
 SlidingWindowSparseEMMatcher::~SlidingWindowSparseEMMatcher() {
-    if (bigRef == 2)
-        deleteHashBuffer(buffer2);
-    else if (bigRef == 1)
-        deleteHashBuffer(buffer1);
-    else if (bigRef == 0)
-        deleteHashBuffer(buffer0);
+    if (ht64bitFlag)
+        delete[] ht64bit;
+    else
+        delete[] ht32bit;
 
     delete[] start1;
 }
@@ -432,16 +482,12 @@ SlidingWindowSparseEMMatcher::matchTexts(vector<TextMatch> &resMatches, const ch
         exit(EXIT_FAILURE);
     }
     resMatches.clear();
-    if (bigRef == 2) {
-        processExactMatchQueryIgnoreCollisionsTightTemplate<std::uint64_t, std::uint64_t>(buffer2, resMatches,
-                  destText, destLen, destIsRef, revComplMatching, minMatchLength, matchingLockPos);
-    } else if (bigRef == 1) {
-        processExactMatchQueryIgnoreCollisionsTightTemplate<std::uint64_t, std::uint32_t>(buffer1, resMatches,
-                  destText, destLen, destIsRef, revComplMatching, minMatchLength, matchingLockPos);
-    }
-    else {
-        processExactMatchQueryIgnoreCollisionsTightTemplate<std::uint32_t, std::uint32_t>(buffer0, resMatches,
-                  destText, destLen, destIsRef, revComplMatching, minMatchLength, matchingLockPos);
+    if (ht64bitFlag) {
+        processExactMatchQueryIgnoreCollisionsTightTemplate<std::uint64_t>(ht64bit, resMatches,
+                            destText, destLen, destIsRef, revComplMatching, minMatchLength, matchingLockPos);
+    } else {
+        processExactMatchQueryIgnoreCollisionsTightTemplate<std::uint32_t>(ht32bit, resMatches,
+                            destText, destLen, destIsRef, revComplMatching, minMatchLength, matchingLockPos);
     }
 }
 
@@ -457,20 +503,19 @@ SlidingWindowExpSparseEMMatcher::SlidingWindowExpSparseEMMatcher(const size_t re
     this->samplingPos = _k1;
     size_t allocSize;
     if (this->htEncodePos(refLengthLimit) >= (1ULL << 32)) {
-        bigRef = 1;  // large Reference
-        allocSize = PgHelpers::safeNewArrayAlloc<uint64_t>(buffer1.first, hash_size, true);
-        *v1logger << "WARNING - LARGE reference file (SIZE / k1 > 4GB), 64-bit arrays\n";
+        ht64bitFlag = true;  // large Reference
+        allocSize = PgHelpers::safeNewArrayAlloc<uint64_t>(ht64bit, hash_size, true);
+        *v1logger << "WARNING - LARGE reference file (SIZE / k1ord > 4GB), 64-bit arrays\n";
     } else {
-        bigRef = 0;  // small Reference
-        allocSize = PgHelpers::safeNewArrayAlloc<uint32_t>(buffer0.first, hash_size, true);
+        allocSize = PgHelpers::safeNewArrayAlloc<uint32_t>(ht32bit, hash_size, true);
     }
     if (hash_size != allocSize) {
         hash_size = allocSize;
         hash_size_minus_one = hash_size - 1;
     }
     SlidingWindowSparseEMMatcher::displayParams();
-    *PgHelpers::appout << "Exponential mode: ";
-    *PgHelpers::appout << "k1 order = " << k1ord << std::endl;
+    *PgHelpers::devout << "Exponential mode: ";
+    *PgHelpers::devout << "k1 order = " << k1ord << std::endl;
 }
 
 SlidingWindowExpRandSparseEMMatcher::SlidingWindowExpRandSparseEMMatcher(const size_t refLengthLimit,
@@ -483,4 +528,3 @@ SlidingWindowExpRandSparseEMMatcher::SlidingWindowExpRandSparseEMMatcher(const s
     }
     *PgHelpers::appout << "Randomized mode!" << std::endl;
 }
-

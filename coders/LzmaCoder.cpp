@@ -12,6 +12,8 @@
 MY_STDAPI LzmaCompress(unsigned char *&dest, size_t &destLen, const unsigned char *src, size_t srcLen,
                        CLzmaEncProps* props, double estimated_compression) {
     props->reduceSize = srcLen;
+    if (srcLen >= UINT32_MAX)
+        props->numThreads = 1;
     size_t propsSize = LZMA_PROPS_SIZE;
     size_t maxDestSize = propsSize + (srcLen + srcLen / 3) * estimated_compression + 128;
     try {
@@ -32,11 +34,11 @@ MY_STDAPI LzmaCompress(unsigned char *&dest, size_t &destLen, const unsigned cha
 
 #define RC_INIT_SIZE 5
 
-MY_STDAPI LzmaUncompress(unsigned char *dest, size_t *destLen, istream &src, size_t *srcLen, ostream* logout) {
+MY_STDAPI LzmaUncompress(unsigned char *dest, size_t *destLen, const unsigned char *src, size_t *srcLen, ostream* logout) {
     size_t propsSize = LZMA_PROPS_SIZE;
     *logout << "... lzma ... ";
     unsigned char propsBuf[LZMA_PROPS_SIZE];
-    PgHelpers::readArray(src, (void*) propsBuf, propsSize);
+    memcpy(propsBuf, src, propsSize);
 
     CLzmaDec p;
     SRes res;
@@ -50,16 +52,13 @@ MY_STDAPI LzmaUncompress(unsigned char *dest, size_t *destLen, istream &src, siz
     p.dic = dest;
     p.dicBufSize = outSize;
     LzmaDec_Init(&p);
-    unsigned char* srcBuf = new unsigned char[UNCOMPRESS_BUFFER_SIZE];
     Int64 srcLeftCount = inSize;
     do {
-        size_t srcBufSize = UNCOMPRESS_BUFFER_SIZE > srcLeftCount?srcLeftCount:UNCOMPRESS_BUFFER_SIZE;
+        size_t srcBufSize = srcLeftCount;
         *srcLen = srcBufSize;
-        PgHelpers::readArray(src, srcBuf, srcBufSize);
         srcLeftCount -= srcBufSize;
-        res = LzmaDec_DecodeToDic(&p, outSize, srcBuf, srcLen, LZMA_FINISH_ANY, &status);
+        res = LzmaDec_DecodeToDic(&p, outSize, src + propsSize, srcLen, LZMA_FINISH_ANY, &status);
     } while (srcLeftCount && status == LZMA_STATUS_NEEDS_MORE_INPUT);
-    delete[] srcBuf;
     *destLen = p.dicPos;
     if (res == SZ_OK && status == LZMA_STATUS_NEEDS_MORE_INPUT)
         res = SZ_ERROR_INPUT_EOF;
