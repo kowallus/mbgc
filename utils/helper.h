@@ -338,4 +338,12 @@ namespace PgHelpers {
 
 }
 
+#if defined(__arm__) || defined(__aarch64__) || defined(__ARM_ARCH)
+
+void A_memcpy(void *dest, const void *src, size_t n);
+
+int A_memcmp(const void *s1, const void *s2, size_t n);
+
+#endif
+
 #endif // HELPER_H_INCLUDED

@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #endif
 
-#define RELEASE_DATE "2023-10-31"
+#define RELEASE_DATE "2023-12-06"
 
 using namespace std;
 

@@ -1,7 +1,9 @@
 #include "MBGC_Decoder.h"
 
 #include "../coders/CodersLib.h"
+#if !defined(__arm__) && !defined(__aarch64__) && !defined(__ARM_ARCH)
 #include "../libs/asmlib.h"
+#endif
 #include "../matching/SimpleSequenceMatcher.h"
 
 #include <fstream>
@@ -804,6 +806,8 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::extractFilesParallel() {
             isDecoding = true;
             masterThreadTargetIdx = 0;
 
+            if (params->decompressionToGzCoderLevel)
+                workerThreadsCount = omp_get_num_threads() - 1;
             if (omp_get_num_threads() - 1 < workerThreadsCount)
                 workerThreadsCount = omp_get_num_threads() - 1;
             extractedFilesCount.resize(workerThreadsCount, 0);

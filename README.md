@@ -7,7 +7,7 @@ Multiple Bacteria Genome Compressor (MBGC) is a tool for compressing
 genomes in FASTA (or gzipped FASTA) input format.
 It performs efficiently in terms of compression ratio and speed for various collections 
 but is tailored for bacteria species. The implementation obtained >6.6 GB/s (both compression- and decompression-wise)
-in case of 1k collection of *E. coli* genomes, tested in RAM disk on: 
+squeezing ~4.9GB collection of 1k *E. coli* genomes to ~4.5MB, tested in RAM disk on: 
 Intel Core i9-10940X (14 cores) 3.3 GHz CPU, 128 GB of DDR4-RAM (2666 MHz, CL 16).
 
 Major features:
@@ -19,7 +19,7 @@ Major features:
 * supports decompression (or repacking to new archive) of selected files,
 * handles FASTA with non-bacteria species as well. 
 
-### Installation on Linux
+### Installation
 
 #### bioconda repository
 
@@ -32,8 +32,8 @@ conda install -c bioconda mbgc
 #### manual build
 
 The following steps create *mbgc* executable.
-On Linux *mbgc* build requires cmake version >= 3.5 installed 
-(check using ```cmake --version```):
+*mbgc* build requires cmake version >= 3.5 installed 
+(check using ```cmake --version```).
 ```bash
 git clone https://github.com/kowallus/mbgc.git
 cd mbgc
@@ -98,7 +98,7 @@ decompression to gz archives of files containing at least one pattern
 specified in *patterns.txt* file (one pattern per line) 
 to *out* folder (which is created if it does not exist):
 ```
-./mbgc d -z3 -F patterns.txt comp.mbgc out
+./mbgc d -z2 -F patterns.txt comp.mbgc out
 ```
 Please note that decompression overwrites existing files!
 
@@ -169,6 +169,16 @@ skipping files not matching any pattern specified in *patterns.txt* file
 ```
 ./mbgc r -F patterns.txt comp.mbgc part.mbgc
 ```
+## Additional remarks
+
+* FASTA files are compressed and stored by *mbgc* (and later extracted)
+  in the order defined by *sequencesListFile*.
+* Reducing number of threads below 4 may result in ratio improvement (in a single-threaded runs
+  from 1% up to 24% for a cross-pathogen dataset in the *speed* mode) at the expense of serious
+  performance penalty (up to a factor of ~6 for human genome collections).
+  The impact of threads on the ratio does not apply to *max* mode and is weakest in *repo* mode
+  (up to ~6% for human genomes collections)
+* Multithreaded compression ratio (mainly in *speed* and *default* modes) may vary up to ~1% from run to run.
 
 ## Publications
 

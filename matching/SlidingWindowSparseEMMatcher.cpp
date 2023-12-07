@@ -28,9 +28,9 @@
 * ================================================================= */
 
 #include "SlidingWindowSparseEMMatcher.h"
-
+#if !defined(__arm__) && !defined(__aarch64__) && !defined(__ARM_ARCH)
 #include "../libs/asmlib.h"
-
+#endif
 #include <algorithm>
 #include <fstream>
 #include <iostream>

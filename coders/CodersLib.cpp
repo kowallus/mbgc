@@ -377,7 +377,11 @@ void CompressionJob::writeCompressedCollectiveParallel(ostream &dest, vector<Com
     vector<size_t> compLens;
     compSeqs.resize(cJobs.size());
     compLens.resize(cJobs.size(), 0);
+#ifdef __APPLE__
+    omp_set_max_active_levels(4);
+#else
     omp_set_nested(true);
+#endif
 #pragma omp parallel for
     for(int i = 0; i < cJobs.size(); i++) {
         ostringstream localLogOut;
@@ -412,7 +416,11 @@ void readCompressedCollectiveParallel(istream &src, vector<string*>& destStrings
     *PgHelpers::devout << "collective decompression of streams..." << endl;
     vector<ostringstream> logOuts;
     logOuts.resize(destStrings.size());
+#ifdef __APPLE__
+    omp_set_max_active_levels(4);
+#else
     omp_set_nested(true);
+#endif
 #pragma omp parallel
     {
 #pragma omp single

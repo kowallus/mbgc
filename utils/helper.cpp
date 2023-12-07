@@ -581,3 +581,15 @@ unsigned long long PgHelpers::getTotalSystemMemory()
     return pages * page_size;
 #endif
 }
+
+#if defined(__arm__) || defined(__aarch64__) || defined(__ARM_ARCH)
+
+void A_memcpy(void *dest, const void *src, size_t n) {
+    memcpy(dest, src, n);
+}
+
+int A_memcmp(const void *s1, const void *s2, size_t n) {
+    return memcmp(s1, s2, n);
+}
+
+#endif

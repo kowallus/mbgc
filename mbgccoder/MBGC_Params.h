@@ -12,7 +12,7 @@ public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 2;
     static const char MBGC_VERSION_MINOR = 0;
-    static const char MBGC_VERSION_REVISION = 0;
+    static const char MBGC_VERSION_REVISION = 1;
 
     char mbgcVersionMajor = MBGC_VERSION_MAJOR;
     char mbgcVersionMinor = MBGC_VERSION_MINOR;
@@ -253,7 +253,7 @@ public:
     bool enableCustomDNAformatting = false;
     bool uppercaseDNA = false;
     bool ignoreFastaFilesPath = false;
-    static const int RECOMMENDED_GZ_COMPRESSION_LEVEL = 3;
+    static const int RECOMMENDED_GZ_COMPRESSION_LEVEL = 2;
     int decompressionToGzCoderLevel = 0;
     bool listHeadersMode = false;
 

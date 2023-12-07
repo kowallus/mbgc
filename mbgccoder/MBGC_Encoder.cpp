@@ -15,8 +15,9 @@ KSEQ_INIT(mbgcInFile, mbgcInRead)
     ( params->checkIfDNAisWellFormed ? (seq->dnaLineLen == DNA_NOT_WELLFORMED ? 0 : seq->dnaLineLen )  \
         : seq->maxLastDnaLineLen ) : 0)
 
+#if !defined(__arm__) && !defined(__aarch64__) && !defined(__ARM_ARCH)
 #include "../libs/asmlib.h"
-
+#endif
 #include "../coders/PropsLibrary.h"
 #include <omp.h>
 
