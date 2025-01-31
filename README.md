@@ -105,6 +105,7 @@ Please note that decompression overwrites existing files!
 Exemplary data and scripts demonstrating usages of 
 MBGC in basic compression scenarios are located in
 [example-scripts](example-scripts) folder.
+More test datasets and scripts are available [here](https://coach.iis.p.lodz.pl/mbgc2-datasets/).
 
 ### Basic usage with standard I/O
 
