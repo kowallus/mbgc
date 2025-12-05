@@ -11,8 +11,8 @@ class MBGC_Params {
 public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 2;
-    static const char MBGC_VERSION_MINOR = 0;
-    static const char MBGC_VERSION_REVISION = 1;
+    static const char MBGC_VERSION_MINOR = 1;
+    static const char MBGC_VERSION_REVISION = 0;
 
     char mbgcVersionMajor = MBGC_VERSION_MAJOR;
     char mbgcVersionMinor = MBGC_VERSION_MINOR;
@@ -31,6 +31,7 @@ public:
     static const int SPEED_MODE_MATCHER_NO_OF_THREADS = 12;
     static const int DEFAULT_MATCHER_NO_OF_THREADS = 8;
     static const int PARALLELIO_MODE_THREADS_LIMIT = 3;
+    static const int SINGLEFILE_PARALLEL_MIN_TARGETS = 4;
     bool noOfThreadsLimited = false;
     int coderThreads = -1;
     int backendThreads = -1;
@@ -90,7 +91,8 @@ public:
     static const uint64_t DEFAULT_REF_LITERAL_BEFORE_AFTER_EXT = 32;
     static const uint64_t DEFAULT_REF_LITERAL_MINIMAL_LENGTH_EXT = SIZE_MAX;
 
-    static const uint64_t MIN_REF_INIT_SIZE = 1 << 21;
+    static const uint64_t MIN_REF_INIT_SIZE = 1 << 16;
+    static const uint64_t MIN_BASIC_BLOCK_SIZE = 1 << 21;
     static const uint64_t AVG_REF_INIT_SIZE = 1 << 23;
     static const uint64_t SEQ_BLOCK_SIZE = 1 << 17;
 
@@ -126,6 +128,44 @@ public:
 
     inline bool isRCinReferenceDisabled() const {
         return refExtensionStrategy & NO_RC_REF_EXTENSION_STRATEGY_MASK;
+    }
+
+    const static int MIN_PROBE_LEN = 2 << 7;
+    const static int MAX_PROBE_LEN = 2 << 15;
+    const static int MAX_NON_STANDARD_SYMBOLS_IN_PERCENT = 10;
+
+    int probe_remaining = MAX_PROBE_LEN;
+    int probe_non_std_count = 0;
+
+    void probeProteinsProfile(char* seq, uint64_t len)
+    {
+        if (probe_remaining == 0)
+            return;
+        len = len > probe_remaining ? probe_remaining : len;
+        probe_remaining -= len;
+
+        for (int i = 0; i < len; i++)
+        {
+            switch (seq[i])
+            {
+                case 'A':
+                case 'C':
+                case 'G':
+                case 'T':
+                case 'U':
+                case 'N': break;
+                default: probe_non_std_count++;
+            }
+        }
+        int probe_len = MAX_PROBE_LEN - probe_remaining;
+        int non_std_symbols_in_percents = probe_non_std_count * 100 / (int) len;
+        if (probe_len >= MIN_PROBE_LEN && k != PROTEINS_PROFILE_KMER_LENGTH
+                && non_std_symbols_in_percents > MAX_NON_STANDARD_SYMBOLS_IN_PERCENT)
+        {
+            probe_remaining = 0;
+            fprintf(stderr,  "Switching to protein profile.\n");
+            setProteinsCompressionProfile();
+        }
     }
 
 #ifdef DEVELOPER_BUILD
@@ -204,6 +244,7 @@ public:
 
     // INPUT PARAMETERS
     int k = DEFAULT_KMER_LENGTH;
+    bool kmerLengthFixed = false;
     int k1 = DEFAULT_MODE_REF_SAMPLING;
     bool referenceSamplingStepFixed = false;
     int k2 = 1;
@@ -246,7 +287,7 @@ public:
     bool rcMatchMinLengthFixed = false;
     bool rcRedundancyRemoval = rcMatchMinLength != 0;
 
-    static const bool checkIfDNAisWellFormed = false;
+    bool allowLossyCompression = false;
     bool enableDNALineLengthEncoding = true;
 
     int64_t dnaLineLength = -1;
@@ -263,6 +304,7 @@ public:
     string outArchiveFileName;
     string outputPath;
     string masterFilterPattern;
+    bool forceOverwrite = false;
 
     bool sequentialMatching = false;
     bool g0IsTarget = false;
@@ -334,17 +376,17 @@ private:
     constexpr static const char *const COMMON_OPTS = "t:Ivh";
     constexpr static const char *const COMMON_DEV_BUILD_OPTS = "PO:";
 
-    constexpr static const char *const COMPRESS_OPTS = "m:Qk:u:r:s:o:Cg:b:x:XR:";
-    constexpr static const char *const COMPRESS_DEV_BUILD_OPTS = "BSM:Dw:G:y:Y:14E:N:8WA:j:J:Vp";
+    constexpr static const char *const COMPRESS_OPTS = "m:Qk:u:r:s:o:Cg:b:x:XR:fL";
+    constexpr static const char *const COMPRESS_DEV_BUILD_OPTS = "BSM:Dw:G:y:Y:14F:N:8WA:j:J:Vp";
 
     constexpr static const char *const COMPRESS_APPEND_COMMON_OPTS = "i:";
     constexpr static const char *const ENCODING_OPTS = "T:U";
 
-    constexpr static const char *const COMMON_FILTERING_OPTS = "f:F:";
+    constexpr static const char *const COMMON_FILTERING_OPTS = "e:E:";
 
-    constexpr static const char *const DECOMPRESS_OPTS = "z:";
+    constexpr static const char *const DECOMPRESS_OPTS = "z:f";
     constexpr static const char *const DECOMPRESS_DEV_BUILD_OPTS = "c";
-    constexpr static const char *const DECODING_COMMON_OPTS = "l:L";
+    constexpr static const char *const DECODING_COMMON_OPTS = "l:Z";
 
     constexpr static const char *const INFO_OPTS = "H";
 
@@ -400,6 +442,8 @@ public:
     static const char MAX_CONSECUTIVE_MISMATCHES_OPT = COMPRESS_OPTS[18];
     static const char DISABLE_MISMATCHES_WITH_EXCLUSION_OPT = COMPRESS_OPTS[20];
     static const char RC_MATCH_MINIMAL_LENGTH_OPT = COMPRESS_OPTS[21];
+    static const char FORCE_OVERWRITE_OPT = COMPRESS_OPTS[23];
+    static const char ALLOW_LOSSY_COMPRESSION_OPT = COMPRESS_OPTS[24];
 
     static const char MATCHER_NO_OF_THREADS_OPT = ENCODING_OPTS[0];
     static const char UPPERCASE_DNA_OPT = ENCODING_OPTS[2];
@@ -430,7 +474,7 @@ public:
     static const char PATTERNS_FILE_OPT = COMMON_FILTERING_OPTS[2];
     static const char GZ_DECOMPRESSION_OPT = DECOMPRESS_OPTS[0];
     static const char DNA_LINE_LENGTH_OPT = DECODING_COMMON_OPTS[0];
-    static const char DISABLE_LAZY_DECODING_OPT = DECODING_COMMON_OPTS[2];
+    static const char DISABLE_LAZY_DECODING_OPT = DECODING_COMMON_OPTS[2]; // DEV_BUILD
 
     static const char CONCAT_HEADERS_AND_SEQS_OPT = DECOMPRESS_DEV_BUILD_OPTS[0];
     static const char DUMP_STREAMS_OPT = VALIDATION_DEV_BUILD_OPTS[0];
@@ -732,6 +776,7 @@ public:
             exit(EXIT_FAILURE);
         }
         MBGC_Params::k = k;
+        kmerLengthFixed = true;
     }
 
     void setReferenceSamplingStep(int k1) {
@@ -1063,7 +1108,11 @@ public:
     }
 
     void setProteinsCompressionProfile() {
-        setKmerLength(PROTEINS_PROFILE_KMER_LENGTH);
+        if (!kmerLengthFixed)
+        {
+            setKmerLength(PROTEINS_PROFILE_KMER_LENGTH);
+            kmerLengthFixed = false;
+        }
         disableMismatchesEncodingWithExclusion();
         if (!rcMatchMinLengthFixed) {
             setRCMatchMinimalLength(0);

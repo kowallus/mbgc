@@ -17,7 +17,7 @@ cmp GCA_000585795.1_Lm1840_genomic.fna out/GCA_000585795.1_Lm1840_genomic.fna
 echo
 echo "4. decompress to 'out' folder a file whose name contains 1824 substring,"
 echo "  without EOLs in DNA sequences (overwrites files extracted in step 2.)"
-mbgc d -l 0 -f 1824 archive1.mbgc out
+mbgc d -f -l 0 -e 1824 archive1.mbgc out
 
 echo
 echo "5. validation (differences expected due to lack of EOLs)"

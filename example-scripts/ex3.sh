@@ -6,7 +6,7 @@ mbgc c seqlist.txt archive3.mbgc
 
 echo
 echo "2. repack archive in max mode with files containing 182 substring"
-mbgc r -m3 -f 182 archive3.mbgc archive3_max.mbgc
+mbgc r -m3 -e 182 archive3.mbgc archive3_max.mbgc
 
 echo
 echo "3. decompress to 'out' folder with original EOLs (after every 80 chars of DNA)"
@@ -25,7 +25,7 @@ mbgc a seqlist.txt archive3_max.mbgc
 echo
 echo "6. decompress to 'out' folder with original EOLs (after every 80 chars of DNA)"
 echo "  (overwrites files extracted in step 3.)"
-mbgc d archive3_max.mbgc out
+mbgc d -f archive3_max.mbgc out
 
 echo
 echo "7. validation"

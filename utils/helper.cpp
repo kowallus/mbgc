@@ -24,7 +24,7 @@ std::fstream *logfileout = NULL;
 void PgHelpers::openLogFile(char* filename) {
     logfileout = new fstream(filename, ios_base::in | ios_base::app);
     if (!*logfileout) {
-        fprintf(stderr, "Cannot open log file: %s\n", filename);
+        fprintf(stderr, "ERROR: Cannot open log file: %s\n", filename);
         exit(EXIT_FAILURE);
     }
     logout = logfileout;
@@ -170,6 +170,10 @@ void* PgHelpers::readWholeArrayFromFile(string srcFile, size_t& arraySizeInBytes
     time_checkpoint();
 
     std::ifstream in(srcFile.c_str(), std::ifstream::binary);
+    if (!in) {
+        fprintf(stderr, "ERROR: Cannot open file: %s\n", srcFile.c_str());
+        exit(EXIT_FAILURE);
+    }
 
     void* destArray = PgHelpers::readWholeArray(in, arraySizeInBytes);
 
@@ -182,7 +186,10 @@ void PgHelpers::writeArrayToFile(string destFile, void* srcArray, size_t arraySi
     time_checkpoint();
 
     std::ofstream out(destFile.c_str(), std::ios::out | std::ios::binary);
-
+    if (!out) {
+        fprintf(stderr, "ERROR: Cannot create file: %s\n", destFile.c_str());
+        exit(EXIT_FAILURE);
+    }
     PgHelpers::writeArray(out, srcArray, arraySize);
 
     cout << "Write " << arraySize << " bytes to " << destFile << " in " << time_millis() << " msec \n";

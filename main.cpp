@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #endif
 
-#define RELEASE_DATE "2023-12-06"
+#define RELEASE_DATE "2025-12-02"
 
 using namespace std;
 
@@ -44,7 +44,7 @@ void printCommonDevOpts() {
 
 void printCompressDeveloperOptions(bool repackCommand) {
     fprintf(stderr, "\n------------------ DEVELOPER OPTIONS ----------------\n");
-    if (!repackCommand)
+    if (repackCommand)
         fprintf(stderr, "[-%c] disable lazy decompression\n", MBGC_Params::DISABLE_LAZY_DECODING_OPT);
     fprintf(stderr, "[-%c] brute parallel encoding mode (without producer-consumer approach)\n",
             MBGC_Params::BRUTE_PARALLEL_MODE_OPT);
@@ -89,14 +89,14 @@ void printEncodeUsage(string base_cmd_name, bool details, bool repackMode) {
     printVersion(details);
     if (repackMode) {
         fprintf(stderr, "\nUsage for repacking part of archive:\n\t%s [-%c <compressionMode>]"
-                        " [-%c <pattern>] [-%c <patternsListFile>]\n\t\t<archiveFile> <outputArchiveFile>\n", base_cmd_name.c_str(),
+                        " [-%c <pattern>] [-%c <patternsFile>]\n\t\t<archiveFile> <outputArchiveFile>\n", base_cmd_name.c_str(),
                         MBGC_Params::COMPRESSION_MODE_OPT,
                         MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT);
         if (details) {
             fprintf(stderr,
                     "\n<archiveFile> mbgc archive filename for repacking\n"
                     "\tfor standard input, set <archiveFile> to %s\n"
-                    "<patternsListFile> name of text file with list of patterns (in separate lines)\n"
+                    "<patternsFile> name of text file with list of patterns (in separate lines)\n"
                     "\texcludes files not matching any pattern (does not invalidate -%c option)\n"
                     "<outputArchiveFile> name of repacked mbgc archive\n"
                     "\tfor standard output, set <outputArchiveFile> to %s\n",
@@ -104,15 +104,15 @@ void printEncodeUsage(string base_cmd_name, bool details, bool repackMode) {
         }
     } else {
         fprintf(stderr, "\nUsage for multiple file compression (list of files given as input):\n\t%s [-%c <compressionMode>]"
-                        " <sequencesListFile> <archiveFile>\n", base_cmd_name.c_str(),
-                MBGC_Params::COMPRESSION_MODE_OPT);
+                        " [-%c] <fastaFileList> <archiveFile>\n", base_cmd_name.c_str(),
+                MBGC_Params::COMPRESSION_MODE_OPT, MBGC_Params::ALLOW_LOSSY_COMPRESSION_OPT);
         fprintf(stderr, "Usage for single file compression:\n\t%s [-%c <compressionMode>]"
-                        " -%c <inputFastaFile> <archiveFile>\n", base_cmd_name.c_str(),
-                MBGC_Params::COMPRESSION_MODE_OPT, MBGC_Params::INPUT_FILE_OPT);
+                        " [-%c] -%c <inputFastaFile> <archiveFile>\n", base_cmd_name.c_str(),
+                MBGC_Params::COMPRESSION_MODE_OPT, MBGC_Params::ALLOW_LOSSY_COMPRESSION_OPT, MBGC_Params::INPUT_FILE_OPT);
 
         if (details) {
             fprintf(stderr,
-                    "\n<sequencesListFile> name of text file with a list of FASTA files (raw or gz)\n"
+                    "\n<fastaFileList> name of text file with a list of FASTA files (raw or gz)\n"
                     "\t(given in separate lines) for compression\n"
                     "<inputFastaFile> name of a FASTA file (raw or gz) for compression\n"
                     "\tfor standard input, set <inputFastaFile> to %s\n"
@@ -122,13 +122,17 @@ void printEncodeUsage(string base_cmd_name, bool details, bool repackMode) {
         }
     }
     fprintf(stderr, "\nBasic options:\n\t[-%c <compressionMode>] "
-                    "(speed: 0; default: 1; repo: 2; max: 3)\n",
-                    MBGC_Params::COMPRESSION_MODE_OPT);
+                    "(speed: 0; default: 1; repo: 2; max: 3)\n"
+                    "\t[-%c] allow lossy compression\n"
+                    "\t[-%c] overwrite an existing output file\n",
+                    MBGC_Params::COMPRESSION_MODE_OPT, MBGC_Params::ALLOW_LOSSY_COMPRESSION_OPT,
+                    MBGC_Params::FORCE_OVERWRITE_OPT);
+
     if (repackMode) {
         fprintf(stderr,
                 "\t[-%c <basesPerRow>] custom format of repacked DNA (0 - unlimited)\n"
                 "\t[-%c <pattern>] exclude files with names not containing pattern\n"
-                "\t[-%c <patternsListFile>] exclude files not matching any pattern\n",
+                "\t[-%c <patternsFile>] exclude files not matching any pattern\n",
                 MBGC_Params::DNA_LINE_LENGTH_OPT, MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT);
     }
     printCommonOpts();
@@ -193,6 +197,12 @@ int encodeCommand(std::string base_cmd_name, int argc, char *argv[]) {
 
     while ((opt = getopt(argc, argv, SHORT_OPTS.c_str())) != -1) {
         switch (opt) {
+            case MBGC_Params::FORCE_OVERWRITE_OPT:
+                params.forceOverwrite = true;
+                break;
+            case MBGC_Params::ALLOW_LOSSY_COMPRESSION_OPT:
+                params.allowLossyCompression = true;
+                break;
             case MBGC_Params::NO_OF_THREADS_OPT:
                 params.setThreadsLimit(atoi(optarg));
                 break;
@@ -396,21 +406,21 @@ void printValidateUsage(string base_cmd_name, bool details) {
     fprintf(stderr, "\nUsage for validation:\n\t%s [-%c <noOfThreads>] [-%c <dnaLineLength>]"
                     " <archiveFile>\n", base_cmd_name.c_str(),
             MBGC_Params::NO_OF_THREADS_OPT, MBGC_Params::DNA_LINE_LENGTH_OPT);
-    fprintf(stderr, "Usage for partial validation:\n\t%s [-%c <pattern>] [-%c <patternsListFile>]"
+    fprintf(stderr, "Usage for partial validation:\n\t%s [-%c <pattern>] [-%c <patternsFile>]"
                     " <archiveFile>\n", base_cmd_name.c_str(), MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::INPUT_FILE_OPT);
 
     if (details) {
         fprintf(stderr,
                 "\n<archiveFile> mbgc archive filename\n"
                 "\tfor standard input in validation, set <archiveFile> to %s\n"
-                "<patternsListFile> name of text file with a list of patterns (in separate lines)\n"
+                "<patternsFile> name of text file with a list of patterns (in separate lines)\n"
                 "\tfiles matching one of the patterns are validated obligatory (does not invalidate -%c option)\n",
                 MBGC_Params::STANDARD_IO_POSIX_ALIAS, MBGC_Params::FILTER_PATTERN_OPT);
     }
     fprintf(stderr, "\nBasic options:\n"
-                    "\t[-%c <basesPerRow>] custom format of decompressed DNA (0 - unlimited)\n"
+                    "\t[-%c <basesPerRow>] custom format of decoded sequences (0 - unlimited)\n"
                     "\t[-%c <pattern>] validate files with names containing pattern\n"
-                    "\t[-%c <patternsListFile>] validate files with names containing any pattern\n",
+                    "\t[-%c <patternsFile>] validate files with names containing any pattern\n",
             MBGC_Params::DNA_LINE_LENGTH_OPT, MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT);
     fprintf(stderr, "\t[-%c] converts bases to uppercase\n",
             MBGC_Params::UPPERCASE_DNA_OPT);
@@ -439,13 +449,13 @@ void printDecodingUsage(string base_cmd_name, bool details, bool isListCmd) {
 #endif
     printVersion(details);
     if (isListCmd) {
-        fprintf(stderr, "\nUsage for partial file listing:\n\t%s [-%c] [-%c <pattern>] [-%c <patternsListFile>]"
+        fprintf(stderr, "\nUsage for partial file listing:\n\t%s [-%c] [-%c <pattern>] [-%c <patternsFile>]"
                         " <archiveFile>\n", base_cmd_name.c_str(),
                         MBGC_Params::LIST_HEADERS_OPT, MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT);
     } else {
         fprintf(stderr, "\nUsage for decompression:\n\t%s [-%c <gzLevel>]"
                         " <archiveFile> [<outputPath>]\n", base_cmd_name.c_str(), MBGC_Params::GZ_DECOMPRESSION_OPT);
-        fprintf(stderr, "Usage for partial decompression (list of patterns given as input):\n\t%s [-%c <patternsListFile>]"
+        fprintf(stderr, "Usage for partial decompression (list of patterns given as input):\n\t%s [-%c <patternsFile>]"
                         " <archiveFile> [<outputPath>]\n", base_cmd_name.c_str(), MBGC_Params::PATTERNS_FILE_OPT);
     }
 
@@ -453,7 +463,7 @@ void printDecodingUsage(string base_cmd_name, bool details, bool isListCmd) {
         fprintf(stderr,
                 "\n<archiveFile> mbgc archive filename\n"
                 "\tfor standard input in decompression, set <archiveFile> to %s\n"
-                "<patternsListFile> name of text file with list of patterns (in separate lines)\n"
+                "<patternsFile> name of text file with list of patterns (in separate lines)\n"
                 "\texcludes files not matching any pattern (does not invalidate -%c option)\n",
                 MBGC_Params::STANDARD_IO_POSIX_ALIAS, MBGC_Params::FILTER_PATTERN_OPT);
         if (!isListCmd)
@@ -466,17 +476,19 @@ void printDecodingUsage(string base_cmd_name, bool details, bool isListCmd) {
     if (isListCmd)
         fprintf(stderr,
                 "\t[-%c <pattern>] exclude files with names not containing pattern\n"
-                "\t[-%c <patternsListFile>] exclude files not matching any pattern\n"
+                "\t[-%c <patternsFile>] exclude files not matching any pattern\n"
                 "\t[-%c] list sequence headers (using convention: \">sequencename>filename\")\n",
                 MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT, MBGC_Params::LIST_HEADERS_OPT);
     else
         fprintf(stderr,
+                "\t[-%c] overwrite an existing output files\n"
                 "\t[-%c <gzLevel>] extract FASTA files to gz archives\n\t\t(compression level: 1 <= %c <= 12, recommended: %d)\n"
-                "\t[-%c <basesPerRow>] custom format of decompressed DNA (0 - unlimited)\n"
+                "\t[-%c <basesPerRow>] custom format of decoded sequences (0 - unlimited)\n"
                 "\t[-%c <pattern>] exclude files with names not containing pattern\n"
-                "\t[-%c <patternsListFile>] exclude files not matching any pattern\n",
-                MBGC_Params::GZ_DECOMPRESSION_OPT, MBGC_Params::GZ_DECOMPRESSION_OPT, MBGC_Params::RECOMMENDED_GZ_COMPRESSION_LEVEL,
-                MBGC_Params::DNA_LINE_LENGTH_OPT, MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT);
+                "\t[-%c <patternsFile>] exclude files not matching any pattern\n",
+                MBGC_Params::FORCE_OVERWRITE_OPT, MBGC_Params::GZ_DECOMPRESSION_OPT, MBGC_Params::GZ_DECOMPRESSION_OPT,
+                MBGC_Params::RECOMMENDED_GZ_COMPRESSION_LEVEL, MBGC_Params::DNA_LINE_LENGTH_OPT,
+                MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT);
     printCommonOpts();
 }
 
@@ -510,6 +522,9 @@ int decodeCommands(std::string base_cmd_name, int argc, char *argv[]) {
 
     while ((opt = getopt(argc, argv, SHORT_OPTS.c_str())) != -1) {
         switch (opt) {
+            case MBGC_Params::FORCE_OVERWRITE_OPT:
+                params.forceOverwrite = true;
+                break;
             case MBGC_Params::NO_OF_THREADS_OPT:
                 params.setThreadsLimit(atoi(optarg));
                 break;
@@ -631,13 +646,13 @@ void printAppendDeveloperOptions() {
 void printAppendUsage(string base_cmd_name, bool details) {
     printVersion(details);
     fprintf(stderr, "\nUsage for appending multiple FASTA archive (list of files given as input):\n\t%s"
-                    " <sequencesListFile> <archiveFile> [<outputArchiveFile>]\n", base_cmd_name.c_str());
+                    " <fastaFileList> <archiveFile> [<outputArchiveFile>]\n", base_cmd_name.c_str());
     fprintf(stderr, "Usage for appending single FASTA file archive:\n\t%s"
                     " -%c <inputFastaFile> <archiveFile> [<outputArchiveFile>]\n", base_cmd_name.c_str(), MBGC_Params::INPUT_FILE_OPT);
 
     if (details) {
         fprintf(stderr,
-                "\n<sequencesListFile> name of text file with a list of FASTA files (raw or gz)\n"
+                "\n<fastaFileList> name of text file with a list of FASTA files (raw or gz)\n"
                 "\t(given in separate lines) for appending to the <archiveFile>\n"
                 "<inputFastaFile> name of a FASTA file (raw or gz) appended to the <archiveFile>\n"
                 "\tfor standard input, set <inputFastaFile> to %s\n"

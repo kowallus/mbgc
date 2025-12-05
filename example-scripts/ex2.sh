@@ -15,7 +15,7 @@ cmp GCA_lm_concat.fna out/GCA_lm_concat.fna
 echo
 echo "4. decompress to 'out' folder without EOLs in DNA sequences"
 echo "  (overwrites files extracted in step 2.)"
-mbgc d -l 0 archive2.mbgc out
+mbgc d -f -l 0 archive2.mbgc out
 
 echo
 echo "5. validation (differences expected due to lack of EOLs)"

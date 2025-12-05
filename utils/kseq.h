@@ -97,7 +97,7 @@ typedef struct __kstring_t {
 #endif
 
 #define __KS_GETUNTIL(__read, __bufsize) \
-	static int64_t ks_getuntil2(kstream_t *ks, int delimiter, kstring_t *str, int *dret, int append) \
+	static int64_t ks_getuntil2(kstream_t *ks, int delimiter, kstring_t *str, int *dret, int append, bool loosy = true) \
 	{ \
 		int gotany = 0; \
 		if (dret) *dret = 0; \
@@ -144,12 +144,12 @@ typedef struct __kstring_t {
 		if (str->s == 0) { \
 			str->m = 1; \
 			str->s = (char*)calloc(1, 1); \
-		} else if (delimiter == KS_SEP_LINE && str->l > 1 && str->s[str->l-1] == '\r') --str->l; \
+		} else if (delimiter == KS_SEP_LINE && loosy && str->l > 1 && str->s[str->l-1] == '\r') --str->l; \
 		str->s[str->l] = '\0'; \
 		return str->l; \
 	} \
-	static inline int ks_getuntil(kstream_t *ks, int delimiter, kstring_t *str, int *dret) \
-	{ return ks_getuntil2(ks, delimiter, str, dret, 0); }
+	static inline int ks_getuntil(kstream_t *ks, int delimiter, kstring_t *str, int *dret, bool loosy = true) \
+	{ return ks_getuntil2(ks, delimiter, str, dret, 0, loosy); }
 
 #define KSTREAM_INIT(type_t, __read, __bufsize) \
 	__KS_TYPE(type_t) \
@@ -191,7 +191,7 @@ typedef struct __kstring_t {
 			seq->last_char = c; \
 		} /* else: the first header char has been read in the previous call */ \
 		seq->comment.l = seq->seq.l = seq->qual.l = 0; /* reset all members */ \
-		if ((r=ks_getuntil(ks, 0, &seq->name, &c)) < 0) return r;  /* normal exit: EOF or error */ \
+		if ((r=ks_getuntil(ks, KS_SEP_SPACE, &seq->name, &c)) < 0) return r;  /* normal exit: EOF or error */ \
 		if (c != '\n') ks_getuntil(ks, KS_SEP_LINE, &seq->comment, 0); /* read FASTA/Q comment */ \
 		if (seq->seq.s == 0) { /* we can do this in the loop below, but that is slower */ \
 			seq->seq.m = 1024; \
@@ -224,25 +224,30 @@ typedef struct __kstring_t {
 		return seq->seq.l; \
 	}
 
-#define __KSEQ_READ_EX(SCOPE) /* detects dna line length if "well-formed" */ \
-	SCOPE int64_t kseq_read_ex(kseq_t *seq) \
+/* Return value:
+   >=0  length of the sequence (normal)
+   -1   end-of-file
+   -3   error reading stream
+   -4	DNA not well-formed
+ */
+#define __KSEQ_READ_LOSSLESS_FASTA(SCOPE) /* detects dna line length if "well-formed", disallows quality scores */ \
+	SCOPE int64_t kseq_read_lossless_fasta(kseq_t *seq) \
 	{ \
 		int c,r; \
 		kstream_t *ks = seq->f; \
 		if (seq->last_char == 0) { /* then jump to the next header line */ \
-			while ((c = ks_getc(ks)) >= 0 && c != '>' && c != '@'); \
+			if ((c = ks_getc(ks)) >= 0 && c != '>') return -3; /* error - not FASTA */ \
 			if (c < 0) return c; /* end of file or error*/ \
 			seq->last_char = c; \
 		} /* else: the first header char has been read in the previous call */ \
 		seq->comment.l = seq->seq.l = seq->qual.l = 0; /* reset all members */ \
-		if ((r=ks_getuntil(ks, 0, &seq->name, &c)) < 0) return r;  /* normal exit: EOF or error */ \
-		if (c != '\n') ks_getuntil(ks, KS_SEP_LINE, &seq->comment, 0); /* read FASTA/Q comment */ \
+		if ((r=ks_getuntil(ks, KS_SEP_LINE, &seq->name, &c, false)) < 0) return r;  /* normal exit: EOF or error */ \
 		if (seq->seq.s == 0) { /* we can do this in the loop below, but that is slower */ \
 			seq->seq.m = 1024; \
 			seq->seq.s = (char*)malloc(seq->seq.m); \
 		} \
 		uint64_t b = seq->seq.l; \
-		while ((c = ks_getc(ks)) >= 0 && c != '>' && c != '+' && c != '@') { \
+		while ((c = ks_getc(ks)) >= 0 && c != '>') { \
 			if (c == '\n') { seq->dnaLineLen = DNA_NOT_WELLFORMED; continue; }; /* skip empty lines */ \
 			if (seq->seq.l > b) { \
 				uint64_t d = seq->seq.l - b; \
@@ -250,37 +255,32 @@ typedef struct __kstring_t {
 			}; \
 			b = seq->seq.l; \
 			seq->seq.s[seq->seq.l++] = c; /* this is safe: we always have enough space for 1 char */ \
-			ks_getuntil2(ks, KS_SEP_LINE, &seq->seq, 0, 1); /* read the rest of the line */ \
+			ks_getuntil2(ks, KS_SEP_LINE, &seq->seq, 0, 1, false); /* read the rest of the line */ \
 		} \
 		if (seq->seq.l > b) { \
         	uint64_t d = seq->seq.l - b; \
         	seq->maxLastDnaLineLen = seq->maxLastDnaLineLen > d ? seq->maxLastDnaLineLen : d; \
 		} \
 		seq->dnaLineLen = !seq->dnaLineLen || seq->dnaLineLen >= seq->maxLastDnaLineLen ? seq->dnaLineLen : DNA_NOT_WELLFORMED; \
-		if (c == '>' || c == '@') seq->last_char = c; /* the first header char has been read */ \
+		if (seq->dnaLineLen == DNA_NOT_WELLFORMED) return -4; \
+		if (c == '>') seq->last_char = c; /* the first header char has been read */ \
 		if (seq->seq.l + 1 >= seq->seq.m) { /* seq->seq.s[seq->seq.l] below may be out of boundary */ \
 			seq->seq.m = seq->seq.l + 2; \
 			kroundup64(seq->seq.m); /* rounded to the next closest 2^k */ \
 			seq->seq.s = (char*)realloc(seq->seq.s, seq->seq.m); \
 		} \
 		seq->seq.s[seq->seq.l] = 0;	/* null terminated string */ \
-		seq->is_fastq = (c == '+'); \
-		if (!seq->is_fastq) return seq->seq.l; /* FASTA */ \
-		if (seq->qual.m < seq->seq.m) {	/* allocate memory for qual in case insufficient */ \
-			seq->qual.m = seq->seq.m; \
-			seq->qual.s = (char*)realloc(seq->qual.s, seq->qual.m); \
-		} \
-		while ((c = ks_getc(ks)) >= 0 && c != '\n'); /* skip the rest of '+' line */ \
-		if (c == -1) return -2; /* error: no quality string */ \
-		while ((c = ks_getuntil2(ks, KS_SEP_LINE, &seq->qual, 0, 1) >= 0 && seq->qual.l < seq->seq.l)); \
-		if (c == -3) return -3; /* stream error */ \
-		seq->last_char = 0;	/* we have not come to the next header line */ \
-		if (seq->seq.l != seq->qual.l) return -2; /* error: qual string is of a different length */ \
-		return seq->seq.l; \
+		return seq->seq.l; /* FASTA */ \
 	}
 
-#define __KSEQ_READ_LT(SCOPE) /* finds only max dna line length */ \
-	SCOPE int64_t kseq_read_lt(kseq_t *seq) \
+/* Return value:
+   >=0  length of the sequence (normal)
+   -1   end-of-file
+   -2   truncated quality string
+   -3   error reading stream
+ */
+#define __KSEQ_READ_LOSSY(SCOPE) /* finds only max dna line length, merge name with comment */ \
+	SCOPE int64_t kseq_read_lossy(kseq_t *seq) \
 	{ \
 		int c,r; \
 		kstream_t *ks = seq->f; \
@@ -290,8 +290,7 @@ typedef struct __kstring_t {
 			seq->last_char = c; \
 		} /* else: the first header char has been read in the previous call */ \
 		seq->comment.l = seq->seq.l = seq->qual.l = 0; /* reset all members */ \
-		if ((r=ks_getuntil(ks, 0, &seq->name, &c)) < 0) return r;  /* normal exit: EOF or error */ \
-		if (c != '\n') ks_getuntil(ks, KS_SEP_LINE, &seq->comment, 0); /* read FASTA/Q comment */ \
+		if ((r=ks_getuntil(ks, KS_SEP_LINE, &seq->name, &c)) < 0) return r;  /* normal exit: EOF or error */ \
 		if (seq->seq.s == 0) { /* we can do this in the loop below, but that is slower */ \
 			seq->seq.m = 1024; \
 			seq->seq.s = (char*)malloc(seq->seq.m); \
@@ -346,8 +345,8 @@ typedef struct __kstring_t {
 	__KSEQ_TYPE(type_t) \
 	__KSEQ_BASIC(SCOPE, type_t) \
 	__KSEQ_READ(SCOPE) \
-	__KSEQ_READ_EX(SCOPE) \
-	__KSEQ_READ_LT(SCOPE)
+	__KSEQ_READ_LOSSLESS_FASTA(SCOPE) \
+	__KSEQ_READ_LOSSY(SCOPE)
 
 #define KSEQ_INIT(type_t, __read) KSEQ_INIT2(static, type_t, __read)
 
@@ -357,7 +356,7 @@ typedef struct __kstring_t {
 	extern kseq_t *kseq_init(type_t fd); \
 	void kseq_destroy(kseq_t *ks); \
 	int64_t kseq_read(kseq_t *seq); \
-	int64_t kseq_read_ex(kseq_t *seq); \
-	int64_t kseq_read_lt(kseq_t *seq);
+	int64_t kseq_read_lossless_fasta(kseq_t *seq); \
+	int64_t kseq_read_lossy(kseq_t *seq);
 
 #endif

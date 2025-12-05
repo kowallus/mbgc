@@ -37,7 +37,7 @@ MBGC_Decoder_API *MBGC_Decoder<lazyMode>::getInstance(MBGC_Params *params, strin
     } else {
         in = new fstream(params->inArchiveFileName, ios_base::in | ios_base::binary);
         if (!*in) {
-            fprintf(stderr, "Cannot open archive %s%s\n", params->inArchiveFileName.c_str(), optionalWarning.c_str());
+            fprintf(stderr, "ERROR: Cannot open archive %s%s\n", params->inArchiveFileName.c_str(), optionalWarning.c_str());
             exit(EXIT_FAILURE);
         }
     }
@@ -110,7 +110,7 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::moveToFile(const string& fi
     std::replace(filepath.begin(), filepath.end(), '\\', '/');
 #ifdef DEVELOPER_BUILD
     if (params->validationMode) {
-        if (filesCount == 1 && targetsCount > 1 && &src != &threadGzOut[threadId]) {
+        if (filesCount == 1 && &src != &threadGzOut[threadId]) {
             threadGzOut[threadId].append(src);
             src.clear();
             return;
@@ -201,9 +201,18 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::moveToFile(const string& fi
             PgHelpers::createFolders(filepath);
             if (params->decompressionToGzCoderLevel)
                 filepath += ".gz";
+            if (!params->forceOverwrite && !append && std::ifstream(filepath)) {
+                fprintf(stderr, "ERROR: file %s already exists (use -%c to force overwrite)\n", filepath.c_str(),
+                    MBGC_Params::FORCE_OVERWRITE_OPT);
+                if (this->filesCount == 1)
+                    exit(EXIT_FAILURE);
+                src.clear();
+                return;
+            }
             fstream fstr(filepath, ios::out | ios::binary | (append ? ios::app : ios::trunc));
             if (!fstr) {
                 fprintf(stderr, "Error: cannot create a file %s\n", filepath.c_str());
+                src.clear();
 #ifdef DEVELOPER_BUILD
 #pragma omp atomic update
                 params->invalidFilesCount++;
@@ -224,9 +233,6 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::moveToFile(const string& fi
 }
 
 template<bool lazyMode> void MBGC_Decoder<lazyMode>::moveToFileIfSelected(const string& filename, string& src, const int thread_no, int targetIdx, bool append) {
-#ifdef DEVELOPER_BUILD
-    if (!params->validationMode)
-#endif
     if (!isTargetSelected(filename, targetIdx)) {
         src.clear();
         return;
@@ -240,7 +246,7 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::initReference(const string 
     refStr[refPos] = 0;
     refPos = REF_SHIFT;
     tIdLiteralPos.push_back(0);
-    if (literalStr.empty())
+    if (literalStr.empty() || headersTemplates[0] == MBGC_Params::FILE_SEPARATOR_MARK)
         return;
     tmp = literalStr.find(MBGC_Params::SEQ_SEPARATOR_MARK, tIdLiteralPos[MASTER_THREAD_ID]);
     A_memcpy((char *) refStr.data() + refPos, literalStr.data() + tIdLiteralPos[MASTER_THREAD_ID],
@@ -526,9 +532,13 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::processLiteral(size_t pos, 
 }
 #endif
 
-template<bool lazyMode> void MBGC_Decoder<lazyMode>::decodeTarget(size_t targetIdx, int tId) {
+template<bool lazyMode> void MBGC_Decoder<lazyMode>::decodeTarget(size_t targetIdx, int tId, bool movePartsToFile) {
     int threadId = lazyMode && !sequentialDecoding ? omp_get_thread_num() : 0;
-    threadOutBuffer[threadId].reserve(largestFileLength);
+    size_t outBufferSize = largestFileLength / (filesCount == 1 ? ((targetsCount + 1) / 2) : 1);
+    bool appendParts = movePartsToFile && masterThreadTargetIdx > 0;
+    if (movePartsToFile && outBufferSize > 2 * MBGC_Params::MIN_BASIC_BLOCK_SIZE)
+        outBufferSize = 2 * MBGC_Params::MIN_BASIC_BLOCK_SIZE;
+    threadOutBuffer[threadId].reserve(outBufferSize);
     threadSeqStr[threadId].reserve(largestContigLength);
     threadExtStr[threadId].reserve(largestContigLength);
 #ifdef DEVELOPER_BUILD
@@ -589,6 +599,11 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::decodeTarget(size_t targetI
         if (!params->isRCinReferenceDisabled() && params->contigsIndivduallyReversed &&
             params->isContigProperForRefRCExtension(threadSeqStr[threadId].size(), unmatchedChars, unmatchedFractionRCFactor))
             loadRef(extPtr, extSize, refLockPos, tRefPos, true);
+        if (movePartsToFile && threadOutBuffer[threadId].size() >= MBGC_Params::MIN_BASIC_BLOCK_SIZE) {
+            moveToFileIfSelected(currentName, threadOutBuffer[MASTER_THREAD_ID], 0, masterThreadTargetIdx,
+                             appendParts);
+            appendParts = true;
+        }
     }
     if (!params->isRCinReferenceDisabled() && !params->contigsIndivduallyReversed) {
         if (tRefPos >= startPos) {
@@ -685,7 +700,7 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::extractFilesSequentially() 
                                 decodeTarget(i, i);
 #ifdef DEVELOPER_BUILD
                                 if (params->validationMode)
-                                    moveToFile(currentName, threadOutBuffer[MASTER_THREAD_ID], 0, false);
+                                    moveToFileIfSelected(currentName, threadOutBuffer[MASTER_THREAD_ID], 0, false);
 #endif
                                 threadOutBuffer[MASTER_THREAD_ID].clear();
                             }
@@ -703,7 +718,7 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::extractFilesSequentially() 
                             decodeTarget(i, i);
 #ifdef DEVELOPER_BUILD
                             if (params->validationMode)
-                                moveToFile(currentName, threadOutBuffer[MASTER_THREAD_ID], 0, false);
+                                moveToFileIfSelected(currentName, threadOutBuffer[MASTER_THREAD_ID], 0, false);
 #endif
                             threadOutBuffer[MASTER_THREAD_ID].clear();
                         }
@@ -729,9 +744,10 @@ void MBGC_Decoder<lazyMode>::extractNextSequentially(int tId) {
         fastForwardTargetStreams(masterThreadTargetIdx, tId);
         finalizeLazyTargetDecoding(masterThreadTargetIdx++, false);
     } else {
-        decodeTarget(masterThreadTargetIdx, tId);
+        bool movePartsToFile = filesCount == 1 && params->g0IsTarget;
+        decodeTarget(masterThreadTargetIdx, tId, movePartsToFile);
         moveToFileIfSelected(currentName, threadOutBuffer[MASTER_THREAD_ID], 0, masterThreadTargetIdx,
-                             filesCount == 1 && (!params->g0IsTarget || masterThreadTargetIdx > 0));
+                             filesCount == 1);
         masterThreadTargetIdx++;
     }
 }
@@ -872,9 +888,6 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::extractFilesParallel() {
                             fastForwardTargetStreams(masterThreadTargetIdx, MASTER_THREAD_ID);
                             finalizeLazyTargetDecoding(masterThreadTargetIdx++, false);
                         } else {
-#ifdef DEVELOPER_BUILD
-                            extractFile |= params->validationMode;
-#endif
                             if (extractFile)
                                 namesBuf[io_thread_no][in[io_thread_no] % writingBufferSize] = filename;
                             threadOutBuffer[threadId] = std::move(

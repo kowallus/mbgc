@@ -35,9 +35,23 @@ mbgcInFile mbgcInOpen(const char *filename) {
         if (f == NULL) {
             string tmpname = filename + string(".gz");
             f = fopen(tmpname.c_str(), "rb");
-            if (f == NULL)
-            {
-                fprintf(stderr, "Cannot open file: %s\n", filename);
+            if (f == NULL) {
+                fprintf(stderr, "ERROR: Cannot open file: %s\n", filename);
+                switch (filename[0]) {
+                case ' ': case '\t': case '\r': case '\n':
+                    fprintf(stderr, "Invalid sequences list file? File name cannot start from '%c' whitespace.\n",
+                        filename[0]);
+                    exit(EXIT_FAILURE);
+                default: ;
+                }
+                for (int i = 0; i < strlen(filename); i++) {
+                    switch (filename[i]) {
+                    case '<': case '>': case ':': case '"': case '|': case '?': case '*':
+                        fprintf(stderr, "Invalid sequences list file? '%s' is not a valid file name.\n", filename);
+                        exit(EXIT_FAILURE);
+                    default: ;
+                    }
+                }
                 exit(EXIT_FAILURE);
             }
         }
@@ -61,20 +75,38 @@ mbgcInFile mbgcInOpen(const char *filename) {
     if (in[0] == GZIP_ID1 && in[1] == GZIP_ID2) {
         size_t uncompressed_size = load_u32_gzip(&in[size - 4]);
         if (uncompressed_size == 0)
-            uncompressed_size = 1;
-        gzf.out = (uint8_t*) malloc(uncompressed_size);
-        size_t in_size;
+            uncompressed_size = size * 4;
+        if ((gzf.out = (uint8_t*) malloc(uncompressed_size)) == NULL) {
+            fprintf(stderr, "Error: out of memory during %s decompression.\n", filename);
+            exit(EXIT_FAILURE);
+        };
+        gzf.size = 0;
+        size_t inPos = 0;
+        size_t in_size, ret_size;
         struct libdeflate_decompressor* d;
         d = libdeflate_alloc_decompressor();
-        if (d == NULL) {
-            fprintf(stderr, "Cannot allocate decompressor.\n");
-            exit(EXIT_FAILURE);
-        }
-        enum libdeflate_result res = libdeflate_gzip_decompress_ex(d, in, size, gzf.out, uncompressed_size, &in_size, &gzf.size);
-        if (res != LIBDEFLATE_SUCCESS) {
-            fprintf(stderr, "Error decompressing gz file: %d.\n", res);
-            exit(EXIT_FAILURE);
-        }
+        do {
+            if (d == NULL) {
+                fprintf(stderr, "Cannot allocate decompressor.\n");
+                exit(EXIT_FAILURE);
+            }
+            enum libdeflate_result res = libdeflate_gzip_decompress_ex(d, in + inPos, size - inPos, gzf.out + gzf.size,
+                uncompressed_size - gzf.size, &in_size, &ret_size);
+            if (res == LIBDEFLATE_INSUFFICIENT_SPACE) {
+                uncompressed_size *= 2;
+                if ((gzf.out = (uint8_t*) realloc(gzf.out, uncompressed_size)) == NULL) {
+                    fprintf(stderr, "Error: out of memory during %s decompression.\n", filename);
+                    exit(EXIT_FAILURE);
+                };
+                continue;
+            }
+            if (res != LIBDEFLATE_SUCCESS) {
+                fprintf(stderr, "Error decompressing gz file: %d.\n", res);
+                exit(EXIT_FAILURE);
+            }
+            inPos += in_size;
+            gzf.size += ret_size;
+        } while (inPos < size);
         free(in);
         libdeflate_free_decompressor(d);
     } else
@@ -107,7 +139,7 @@ int mbgcInClose(mbgcInFile &gzf) {
     return 0;
 }
 
-mbgcInFile &mbgcInSplit_iter(mbgcInFile &gzf, size_t minSplitSize, char splitChar) {
+mbgcInFile &mbgcInSplit_init(mbgcInFile &gzf) {
     gzf.fileOut = gzf.out;
     gzf.fileSize = gzf.size;
     gzf.size = 0;

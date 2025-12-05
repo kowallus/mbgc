@@ -19,7 +19,7 @@ mbgc a -i GCA_000585795.1_Lm1840_genomic.fna archive4.mbgc
 
 echo
 echo "5. decompress to 'out' folder with original EOLs (after every 80 chars of DNA)"
-mbgc d archive4.mbgc out
+mbgc d -f archive4.mbgc out
 
 echo
 echo "6. validation (against concatenated multi-FASTA)"

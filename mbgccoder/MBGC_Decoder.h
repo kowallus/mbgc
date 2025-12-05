@@ -102,7 +102,7 @@ private:
                             size_t guardLitPos, const int tId);
 
     void finalizeLazyTargetDecoding(int targetIdx, bool targetActuallyDecoded);
-    void decodeTarget(size_t targetIdx, int tId);
+    void decodeTarget(size_t targetIdx, int tId, bool movePartsToFile = false);
     void loadRef(const char *seqText, size_t seqLength, size_t refLockPos, size_t& refPos1, bool loadRCRef);
 
     size_t namePos = 0;

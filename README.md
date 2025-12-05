@@ -13,23 +13,17 @@ Intel Core i9-10940X (14 cores) 3.3 GHz CPU, 128 GB of DDR4-RAM (2666 MHz, CL 16
 Major features:
 * supports gzipped (.gz) archives as input and output,
 * preserves folder structure of compressed files,
-* preserves "well-formed" DNA streams formatting (*defined in [NAF](https://kirill-kryukov.com/study/naf/) specification),
+* preserves "well-formed" sequence formatting (defined in [NAF](https://kirill-kryukov.com/study/naf/) specification),
+and offers [lossy compression](#lossless-and-lossy-compression-modes) when sequences are malformed,
 * supports standard input and output during (de)compression,
 * enables appending FASTA to existing archives,
 * supports decompression (or repacking to new archive) of selected files,
-* handles FASTA with non-bacteria species as well. 
+* handles FASTA with non-bacteria species and amino acids as well.
 
-### Installation
+*mbgc* is available through [bioconda repository](https://anaconda.org/bioconda/mbgc). More information can be found in the [bioconda page](https://bioconda.github.io/recipes/mbgc/README.html). 
 
-#### bioconda repository
 
-*mbgc* is available through bioconda repository. 
-Once conda manager is installed, run the following command to install *mbgc*:
-```bash
-conda install -c bioconda mbgc 
-```
-
-#### manual build
+### Manual build
 
 The following steps create *mbgc* executable.
 *mbgc* build requires cmake version >= 3.5 installed 
@@ -47,29 +41,31 @@ make mbgc
 
 ```
 Usage for multiple file compression (list of files given as input):
-        mbgc c [-m <compressionMode>] <sequencesListFile> <archiveFile>
+        mbgc c [-m <compressionMode>] [-L] <fastaFileList> <archiveFile>
 Usage for single file compression:
-        mbgc c [-m <compressionMode>] -i <inputFastaFile> <archiveFile>
+        mbgc c [-m <compressionMode>] [-L] -i <inputFastaFile> <archiveFile>
 Usage for decompression:
         mbgc d [-z <gzLevel>] <archiveFile> [<outputPath>]
 Usage for partial decompression (list of patterns given as input):
-        mbgc d [-F <patternsListFile>] <archiveFile> [<outputPath>]
+        mbgc d [-E <patternsFile>] <archiveFile> [<outputPath>]
 
-<sequencesListFile> name of text file with a list of FASTA files (raw or gz)
+<fastaFileList> name of text file with a list of FASTA files (raw or gz)
         (given in separate lines) for compression
 <inputFastaFile> name of a FASTA file (raw or gz) for compression
 <archiveFile> mbgc archive filename
-<patternsListFile> name of text file with list of patterns (in separate lines)
-        excludes files not matching any pattern (does not invalidate -f option)
+<patternsFile> name of text file with list of patterns (in separate lines)
+        excludes files not matching any pattern (does not invalidate -e option)
 <outputPath> extraction target path root (current directory by default)
 
 Basic options (for compression, decompression and commons):
         [-m <compressionMode>] (speed: 0; default: 1; repo: 2; max: 3)
+        [-L] allow lossy compression
         [-z <gzLevel>] extract FASTA files to gz archives
                 (compression level: 1 <= z <= 12, recommended: 3)
-        [-l <basesPerRow>] custom format of decompressed DNA (0 - unlimited)
-        [-f <pattern>] exclude files with names not containing pattern
-        [-F <patternsListFile>] exclude files not matching any pattern 
+        [-l <basesPerRow>] custom format of decoded sequences (0 - unlimited)
+        [-f] overwrite an existing output file
+        [-e <pattern>] exclude files with names not containing pattern
+        [-E <patternsFile>] exclude files not matching any pattern 
         [-t <noOfThreads>] set limit of used threads
         [-I] ignore FASTA files paths (use only filenames)
         [-h] print full command help and exit
@@ -81,10 +77,10 @@ Compression modes description:
         (2) repo - for public repositories (better ratio, good speed)
         (3) max - for long-term storage (best ratio, memory-frugal)
 ```
-compression of FASTA files (raw or gzipped) listed in *seqlist.txt* file 
+compression of FASTA files (raw or gzipped) listed in *fastaList.txt* file 
 (one FASTA file per line):
 ```
-./mbgc c seqlist.txt comp.mbgc
+./mbgc c fastaList.txt comp.mbgc
 ```
 compression of a single FASTA file (in FASTA or gzipped FASTA format):
 ```
@@ -98,14 +94,40 @@ decompression to gz archives of files containing at least one pattern
 specified in *patterns.txt* file (one pattern per line) 
 to *out* folder (which is created if it does not exist):
 ```
-./mbgc d -z2 -F patterns.txt comp.mbgc out
+./mbgc d -z2 -E patterns.txt comp.mbgc out
 ```
-Please note that decompression overwrites existing files!
+Please note that since version 2.1 MBGC does not overwrite existing files!
+
+To force overwriting use ```-f``` option, for example:
+```
+./mbgc d -f -comp.mbgc out
+```
 
 Exemplary data and scripts demonstrating usages of 
 MBGC in basic compression scenarios are located in
 [example-scripts](example-scripts) folder.
 More test datasets and scripts are available [here](https://coach.iis.p.lodz.pl/mbgc2-datasets/).
+
+
+### Lossless and lossy compression modes
+
+Since version 2.1 MBGC ensures lossless compression by default.
+Lossless compression is supported for multi-FASTA files:
+- with headers starting with the '>' symbol,
+- with a fixed line length for sequence lines within each file (except that the last line of a sequence may be shorter),
+- without empty lines (yet, empty sequences are supported),
+- without comments starting with the ';' symbol.
+
+If a FASTA file cannot be compressed losslessly, lossy compression mode can be enabled using ```-L``` option.
+```
+./mbgc c -L fastaList.txt comp.mbgc
+```
+When sequences are not "well-formed" (see [NAF](https://kirill-kryukov.com/study/naf/) specification)
+and line-length cannot be preserved losslessly,
+MBGC will store the length of the longest sequence line within each file.
+For lossy single-file compression this may differ, because the file is compressed in blocks 
+and each block stores the length of the longest sequence line within that block. 
+
 
 ### Basic usage with standard I/O
 
@@ -123,10 +145,9 @@ compression of FASTA in standard input data stream
 ```
 ./mbgc c -i - comp.mbgc
 ```
-decompression to standard output 
-(without EOLs symbols within DNA sequences):
+decompression to standard output without EOLs symbols within sequences:
 ```
-./mbgc d comp.mbgc -
+./mbgc d -l0 comp.mbgc -
 ```
 ### Usage with other commands
 
@@ -150,12 +171,12 @@ or using default command syntax:
 listing headers (using convention: ">sequencename>filename") 
 in filenames containing ASM17 pattern:
 ```
-./mbgc i -f ASM17 comp.mbgc
+./mbgc i -e ASM17 comp.mbgc
 ```
-appending FASTA files (raw or gzipped) listed in seqlist.txt file 
+appending FASTA files (raw or gzipped) listed in fastaList.txt file 
 (one FASTA file per line) to archive:
 ```
-./mbgc a seqlist.txt comp.mbgc
+./mbgc a fastalist.txt comp.mbgc
 ```
 Please note that appending ignores FASTA with file names 
 already existing in the archive.
@@ -168,12 +189,12 @@ repacking archive (using default compression mode)
 skipping files not matching any pattern specified in *patterns.txt* file 
 (one pattern per line):
 ```
-./mbgc r -F patterns.txt comp.mbgc part.mbgc
+./mbgc r -E patterns.txt comp.mbgc part.mbgc
 ```
 ## Additional remarks
 
 * FASTA files are compressed and stored by *mbgc* (and later extracted)
-  in the order defined by *sequencesListFile*.
+  in the order defined by *fastaFileList*.
 * Reducing number of threads below 4 may result in ratio improvement (in a single-threaded runs
   from 1% up to 24% for a cross-pathogen dataset in the *speed* mode) at the expense of serious
   performance penalty (up to a factor of ~6 for human genome collections).

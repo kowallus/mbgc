@@ -278,7 +278,7 @@ HashBuffer<MyUINT1, MyUINT2> CopMEMMatcher::processRefMultithreaded() {
     uint8_t* counts = new uint8_t[hash_size + 2]();
 	genCummMultithreaded(N, start1, counts, cumm);
     const size_t hashCount = cumm[hash_size + 1];
-    MyUINT1* sampledPositions = new MyUINT1[hashCount + 2];
+    MyUINT1* sampledPositions = new MyUINT1[hashCount + 2 + UINT8_MAX];
     *cmV1logger << "Hash count = " << hashCount << std::endl;
 
     #pragma omp parallel for default(none) shared(k1MULTI2, counts, cumm, sampledPositions)

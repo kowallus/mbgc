@@ -39,7 +39,7 @@ int mbgcInClose(mbgcInFile &gzf);
 string gzcompress(string& src, int clevel);
 
 // for inner-file iteration purposes
-mbgcInFile& mbgcInSplit_iter(mbgcInFile &gzf, size_t minSplitSize, char splitChar);
+mbgcInFile& mbgcInSplit_init(mbgcInFile &gzf);
 mbgcInFile mbgcInSplit_next(mbgcInFile &itergzf, size_t minSplitSize, char splitChar);
 
 #endif //MBGC_INPUT_WITH_LIBDEFLATE_WRAPPER_H

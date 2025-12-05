@@ -9,11 +9,31 @@
 KSEQ_INIT(mbgcInFile, mbgcInRead)
 
 #define KSEQ_READ(seq) (params->enableDNALineLengthEncoding ? \
-    ( params->checkIfDNAisWellFormed ? kseq_read_ex(seq) : kseq_read_lt(seq) ): kseq_read(seq))
+    ( params->allowLossyCompression ? kseq_read_lossy(seq) : kseq_read_lossless_fasta(seq) ): kseq_read(seq))
 
 #define KSEQ_DNA_LINE_LENGTH(seq) (params->enableDNALineLengthEncoding ? \
-    ( params->checkIfDNAisWellFormed ? (seq->dnaLineLen == DNA_NOT_WELLFORMED ? 0 : seq->dnaLineLen )  \
-        : seq->maxLastDnaLineLen ) : 0)
+    ( params->allowLossyCompression ? seq->maxLastDnaLineLen \
+        : (seq->dnaLineLen == DNA_NOT_WELLFORMED ? 0 : seq->dnaLineLen )) : 0)
+
+
+void validate_kseq_status(string& fileName, kseq_t* seq, int kseq_status)
+{
+    if (kseq_status <= -2) {
+        fprintf(stderr, "Error parsing file %s", fileName.c_str());
+        switch (kseq_status)
+        {
+        case -2:
+        case -3: fprintf(stderr, " - expected FASTA format.\n");
+            break;
+        case -4: fprintf(stderr, "\nDetected inconsistent line length in sequences while processing:\n>%s\n",
+            seq->name.s);
+            break;
+        default: fprintf(stderr, " - unknown error (code %d).\n", kseq_status);
+        }
+        fprintf(stderr, "Consider using lossy compression mode (-%c option).\n", MBGC_Params::ALLOW_LOSSY_COMPRESSION_OPT);
+        exit(EXIT_FAILURE);
+    }
+}
 
 #if !defined(__arm__) && !defined(__aarch64__) && !defined(__ARM_ARCH)
 #include "../libs/asmlib.h"
@@ -86,6 +106,23 @@ void MBGC_Encoder::processHeader(uint32_t fileIndex, const string& header) {
 }
 
 void MBGC_Encoder::processFileName(string &fileName) {
+    switch (fileName[0]) {
+    case ' ': case '\t': case '\r': case '\n':
+        fprintf(stderr, "ERROR: Sequences list file %s is invalid!\n", params->seqListFileName.c_str());
+        fprintf(stderr, "File name cannot start from '%c' whitespace: %s\n", fileName[0],
+            fileName.c_str());
+        exit(EXIT_FAILURE);
+    default: ;
+    }
+    for (char c : fileName) {
+        switch (c) {
+        case '<': case '>': case ':': case '"': case '|': case '?': case '*':
+            fprintf(stderr, "ERROR: Sequences list file %s is invalid!\n", params->seqListFileName.c_str());
+            fprintf(stderr, "It contains invalid file name: %s\n", fileName.c_str());
+            exit(EXIT_FAILURE);
+        default: ;
+        }
+    }
     int pos, len;
     PgHelpers::normalizePath(fileName, pos, len, params->ignoreFastaFilesPath);
     if (fileNamesSet.emplace(fileName.substr(pos, len)).second == true) {
@@ -108,7 +145,7 @@ void MBGC_Encoder::loadG0Ref(string& refName) {
     if (!params->sequentialMatching) {
         largestFileLength = firstFp.size;
         if (singleFastaFileMode) {
-            mbgcInSplit_iter(firstFp, params->MIN_REF_INIT_SIZE, '>');
+            mbgcInSplit_init(firstFp);
             mbgcInSplit_next(firstFp, params->MIN_REF_INIT_SIZE, '>');
         }
         totalFilesLength += firstFp.size;
@@ -121,29 +158,40 @@ void MBGC_Encoder::loadG0Ref(string& refName) {
     while ((kseq_status = KSEQ_READ(seq)) >= 0) {
         if (params->uppercaseDNA)
             PgHelpers::upperSequence(seq->seq.s, seq->seq.l);
+        params->probeProteinsProfile(seq->seq.s, seq->seq.l);
         largestContigSize = seq->seq.l > largestContigSize ? seq->seq.l : largestContigSize;
         refStr.append(seq->seq.s, seq->seq.l);
         targetLiterals[0].append(seq->seq.s, seq->seq.l);
         targetLiterals[0].push_back(MBGC_Params::SEQ_SEPARATOR_MARK);
-        string header = readHeader(seq);
         if (params->sequentialMatching)
+        {
+            int probed_len = seq->seq.l;
+            while (probed_len < MBGC_Params::MIN_PROBE_LEN && ((kseq_status = KSEQ_READ(seq)) >= 0))
+            {
+                params->probeProteinsProfile(seq->seq.s, seq->seq.l);
+                probed_len += seq->seq.l;
+            }
+            validate_kseq_status(refName, seq, kseq_status);
             break;
+        }
+        string header = readHeader(seq);
         processHeader(0, header);
         seqCounter++;
     }
-    if (kseq_status <= -2) {
-        fprintf(stderr, "Error parsing file %s (errCode: %d) - expected FASTA format\n", refName.c_str(), kseq_status);
-        exit(EXIT_FAILURE);
-    }
+    validate_kseq_status(refName, seq, kseq_status);
     refG0InitPos = refStr.size();
     *PgHelpers::devout << "loaded reference - " << PgHelpers::time_millis() << " [ms]" << endl;
     size_t basicRefLength = params->sequentialMatching && !singleFastaFileMode ? firstFp.size : refStr.size();
-    basicRefLength = basicRefLength > params->MIN_REF_INIT_SIZE ? basicRefLength : params->MIN_REF_INIT_SIZE;
-    int64_t elementsCount = singleFastaFileMode ?
-                            (((int64_t) firstFp.fileSize) - 1) / ((int64_t) basicRefLength) + 1 : filesCount;
+    basicRefLength = basicRefLength > params->MIN_BASIC_BLOCK_SIZE ? basicRefLength : params->MIN_BASIC_BLOCK_SIZE;
+    int64_t elementsCount = filesCount;
+    if (singleFastaFileMode) {
+        int64_t remaining_size = firstFp.fileSize -
+            (params->sequentialMatching ? params->MIN_BASIC_BLOCK_SIZE : firstFp.size);
+        elementsCount = 1 + (remaining_size + params->MIN_BASIC_BLOCK_SIZE - 1) / params->MIN_BASIC_BLOCK_SIZE;
+    }
     params->g0IsTarget = params->sequentialMatching;
-    targetsCount = elementsCount - (params->g0IsTarget ? 0 : 1);
-    if (!params->g0IsTarget && targetsCount == 0) {
+    targetsCount = (params->sequentialMatching && singleFastaFileMode) ? 1 : elementsCount - (params->g0IsTarget ? 0 : 1);
+    if (!params->g0IsTarget && filesCount == 1 && targetsCount < MBGC_Params::SINGLEFILE_PARALLEL_MIN_TARGETS) {
         fprintf(stderr, "Switching to sequential matching mode (input file too small).\n");
         largestFileLength = 0;
         totalFilesLength = 0;
@@ -556,6 +604,17 @@ void MBGC_Encoder::loadFileNames() {
             string line;
             while (getline(listSrc, line))
                 fileNames.push_back(line);
+            if (fileNames.empty()) {
+                fprintf(stderr, "ERROR: Sequences list file %s is empty!\n", params->seqListFileName.c_str());
+                exit(EXIT_FAILURE);
+            }
+            if (fileNames[0][0] == '>') {
+                fprintf(stderr, "ERROR: Sequences list file %s is invalid!\n", params->seqListFileName.c_str());
+                fprintf(stderr, "File name cannot start from '>' character: %s\n", fileNames[0].c_str());
+                fprintf(stderr, "TIP: To compress a single FASTA file use -%c option.\n",
+                    MBGC_Params::INPUT_FILE_OPT);
+                exit(EXIT_FAILURE);
+            }
         }
     }
     filesCount = fileNames.size();
@@ -673,10 +732,8 @@ void MBGC_Encoder::encodeTargetsWithParallelIO() {
             }
             if (params->enableExtensionsWithMismatches)
                 targetGapMismatchesFlags[0].push_back(MBGC_Params::FILE_SEPARATOR_MARK);
-            if (kseq_status <= -2) {
-                fprintf(stderr, "Error parsing file %s (errCode: %d) - expected FASTA format\n", fileNames[i].c_str(), kseq_status);
-                exit(EXIT_FAILURE);
-            }
+            validate_kseq_status(fileNames[i], seq, kseq_status);
+
             PgHelpers::writeValue<uint32_t>(seqsCountsDest, seqCounter);
             PgHelpers::writeValue<uint64_t>(dnaLineLengthsDest, KSEQ_DNA_LINE_LENGTH(seq));
 #ifdef DEVELOPER_BUILD
@@ -816,10 +873,7 @@ inline void MBGC_Encoder::encodeTargetSequence(int i, bool calledByMaster) {
     }
     if (params->enableExtensionsWithMismatches)
         targetGapMismatchesFlags[i].push_back(MBGC_Params::FILE_SEPARATOR_MARK);
-    if (kseq_status <= -2) {
-        fprintf(stderr, "Error parsing file %s (errCode: %d) - expected FASTA format\n", fileNames[i + targetsShift].c_str(), kseq_status);
-        exit(EXIT_FAILURE);
-    }
+    validate_kseq_status(fileNames[i + targetsShift], seq, kseq_status);
     dnaLineLength[i] = KSEQ_DNA_LINE_LENGTH(seq);
     kseq_destroy(seq);
 #pragma omp critical(encodingStatsBlock)
@@ -930,7 +984,7 @@ void MBGC_Encoder::readFilesParallelTask(const int thread_no) {
             if (thread_no == readingThreadsCount - 1) {
                 int64_t t = i % readingThreadsCount;
                 if (in[t] < targetsCount && in[t] < out[t] + readingThreadsCount * readingBufferSize) {
-                    fps[in[t]] = mbgcInSplit_next(firstFp, params->MIN_REF_INIT_SIZE, '>');
+                    fps[in[t]] = mbgcInSplit_next(firstFp, params->MIN_BASIC_BLOCK_SIZE, '>');
                     if (fps[in[t]].size == 0)
                         targetsCount = in[t];
                     else {
@@ -1130,7 +1184,17 @@ void MBGC_Encoder::prepareAndCompressStreams() {
     dnaLineLengthsDest.clear();
     ostream* out;
     string tempArchiveFileName = params->outArchiveFileName + MBGC_Params::TEMPORARY_FILE_SUFFIX;
-    out = params->isStdoutMode(false) ? &cout : new fstream(tempArchiveFileName, ios::out | ios::binary | ios::trunc);
+    if (params->isStdoutMode(false)) {
+        out = &cout;
+    } else {
+        PgHelpers::createFolders(tempArchiveFileName);
+        out = new fstream(tempArchiveFileName, ios::out | ios::binary | ios::trunc);
+    }
+    if (!*out)
+    {
+        fprintf(stderr, "ERROR: Cannot create archive: %s!\n", params->outArchiveFileName.c_str());
+        exit(EXIT_FAILURE);
+    }
     params->write(*out);
     writeStats(*out);
     prepareHeadersStreams();
@@ -1164,9 +1228,10 @@ void MBGC_Encoder::prepareAndCompressStreams() {
                                    unmatchedFractionFactors.size(), refExtFactorsProps.get());
     auto seqCoderProps = params->ultraStreamsCompression ?
             getDefaultCoderProps(LZMA_CODER, CODER_LEVEL_MAX, LZMA_DATAPERIODCODE_8_t)
-            :(fastDecoder ? getDefaultCoderProps(LZMA_CODER, CODER_LEVEL_FAST, LZMA_DATAPERIODCODE_8_t)
+            :(fastDecoder || params->k == MBGC_Params::PROTEINS_PROFILE_KMER_LENGTH ? getDefaultCoderProps(LZMA_CODER, CODER_LEVEL_FAST, LZMA_DATAPERIODCODE_8_t)
                 : getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX, fastDecoder ? 4 :
-                                       (params->enableExtensionsWithMismatches ? 5 :
+                                       (params->enableExtensionsWithMismatches ?
+                                           (params->mismatchesWithExclusion ? 5 : 7) :
                                     (params->sequentialMatching ? 6 : 7))));
     int seqBlocksCount = bestRatio ? 1 : (fastDecoder ? 4 : (repoMode ? 3 : 2));
     ParallelBlocksCoderProps blockSeqCoderProps(seqBlocksCount, seqCoderProps.get());
@@ -1198,7 +1263,8 @@ void MBGC_Encoder::prepareAndCompressStreams() {
     auto mapOff5thByteCoderProps = getDefaultCoderProps(PPMD7_CODER, CODER_LEVEL_MAX, 4);
     if (refFinalTotalLength > UINT32_MAX)
         cJobs.emplace_back("matches offsets 5th byte stream... ", targetMapOff5thByte[0], mapOff5thByteCoderProps.get());
-    auto nMapLenCoderProps = getDefaultCoderProps(LZMA_CODER, defaultCoderLevel, LZMA_DATAPERIODCODE_32_t);
+    auto nMapLenCoderProps = getDefaultCoderProps(LZMA_CODER, defaultCoderLevel,
+        params->frugal64bitLenEncoding ? LZMA_DATAPERIODCODE_16_t : LZMA_DATAPERIODCODE_32_t);
     int mapLenBlocksCount = (bestRatio ? 2 : (fastDecoder ? 10 : (repoMode ? 3 : 5)));
     ParallelBlocksCoderProps blockNMapLenCoderProps(mapLenBlocksCount, nMapLenCoderProps.get());
     cJobs.emplace_back("matches lengths stream... ", mapLenStream, &blockNMapLenCoderProps);
@@ -1210,8 +1276,14 @@ void MBGC_Encoder::prepareAndCompressStreams() {
     size_t outSize = out->tellp();
     if (!params->isStdoutMode(false)) {
         delete (out);
-        if (std::ifstream(params->outArchiveFileName))
+        if (std::ifstream(params->outArchiveFileName)) {
+            if (!params->appendCommand && !params->forceOverwrite) {
+                fprintf(stderr, "ERROR: file %s already exists (use -%c to force overwrite)\n",
+                    params->outArchiveFileName.data(), MBGC_Params::FORCE_OVERWRITE_OPT);
+                exit(EXIT_FAILURE);
+            }
             remove(params->outArchiveFileName.c_str());
+        }
         if (rename(tempArchiveFileName.c_str(), params->outArchiveFileName.c_str()) != 0) {
             fprintf(stderr, "Error preparing output file: %s\n", params->outArchiveFileName.c_str());
             exit(EXIT_FAILURE);
@@ -1241,9 +1313,13 @@ void MBGC_Encoder::encode() {
         params->backendThreads = omp_get_num_procs();
     }
     params->enableOmpThreads(params->coderThreads);
-    if (!params->isStdoutMode(false) && std::ifstream(params->outArchiveFileName)
-        && (!params->appendCommand || params->inArchiveFileName != params->outArchiveFileName))
-        fprintf(stderr, "WARNING: file %s already exists\n", params->outArchiveFileName.data());
+    if (!params->isStdoutMode(false) && !params->forceOverwrite
+        && std::ifstream(params->outArchiveFileName)
+        && (!params->appendCommand || params->inArchiveFileName != params->outArchiveFileName)) {
+        fprintf(stderr, "ERROR: file %s already exists (use -%c to force overwrite)\n",
+                    params->outArchiveFileName.data(), MBGC_Params::FORCE_OVERWRITE_OPT);
+        exit(EXIT_FAILURE);
+    }
     if (PgHelpers::numberOfThreads == 1)
         params->setSequentialMatchingMode();
     if (!params->appendCommand) {
@@ -1323,15 +1399,18 @@ void MBGC_Encoder::appendTemplate(MBGC_Decoder<lazyMode>* decoder, MBGC_Params& 
     if (params->g0IsTarget || params->matcherWorkingThreads == 1)
         params->setSequentialMatchingMode();
     if (!params->sequentialMatching && singleFastaFileMode)
-        mbgcInSplit_iter(firstFp, params->MIN_REF_INIT_SIZE, '>');
+        mbgcInSplit_init(firstFp);
     size_t basicRefLength = refG0InitPos;
-    basicRefLength = basicRefLength > params->MIN_REF_INIT_SIZE ? basicRefLength : params->MIN_REF_INIT_SIZE;
-    targetsCount = singleFastaFileMode && !params->sequentialMatching ? (((int64_t) firstFp.fileSize) - 1) / basicRefLength + 1: filesCount;
+    basicRefLength = basicRefLength > params->MIN_BASIC_BLOCK_SIZE ? basicRefLength : params->MIN_BASIC_BLOCK_SIZE;
+    targetsCount = singleFastaFileMode && !params->sequentialMatching ?
+        (((int64_t) firstFp.fileSize) + basicRefLength - 1) / basicRefLength : filesCount;
     targetsShift = 0;
     initMatcher(refStr.data() + 1, refStr.size() - 1, initialRefLength);
     if (decoder->reachedRefLengthCount > 0) {
         matcher->setPosition(decoder->refPos, decoder->reachedRefLengthCount);
     }
+    if (basicRefLength > params->AVG_REF_INIT_SIZE * 2)
+        readingBufferSize = 1 + readingBufferSize * params->AVG_REF_INIT_SIZE * 2 / basicRefLength;
     *PgHelpers::appout << "processed reference - " << PgHelpers::time_millis() << " [ms]" << endl;
     delete(decoder);
     encode();
