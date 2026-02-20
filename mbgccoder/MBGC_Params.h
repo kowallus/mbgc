@@ -12,7 +12,7 @@ public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 2;
     static const char MBGC_VERSION_MINOR = 1;
-    static const char MBGC_VERSION_REVISION = 0;
+    static const char MBGC_VERSION_REVISION = 1;
 
     char mbgcVersionMajor = MBGC_VERSION_MAJOR;
     char mbgcVersionMinor = MBGC_VERSION_MINOR;
@@ -45,6 +45,8 @@ public:
     bool storeFileSeparatorMarksInHeadersStream = false;
     bool lazyDecompressionSupport = true;
     bool disableLazyDecompression = false;
+
+    bool appOutToCerr = false;
 
     // MATCHING PARAMS
 
@@ -148,6 +150,11 @@ public:
         {
             switch (seq[i])
             {
+                case 'a':
+                case 'c':
+                case 'g':
+                case 't':
+                case 'u':
                 case 'A':
                 case 'C':
                 case 'G':
@@ -373,7 +380,7 @@ public:
 #endif
 
 private:
-    constexpr static const char *const COMMON_OPTS = "t:Ivh";
+    constexpr static const char *const COMMON_OPTS = "t:Ivh2";
     constexpr static const char *const COMMON_DEV_BUILD_OPTS = "PO:";
 
     constexpr static const char *const COMPRESS_OPTS = "m:Qk:u:r:s:o:Cg:b:x:XR:fL";
@@ -424,6 +431,7 @@ public:
     static const char IGNORE_FASTA_FILES_PATHS_OPT = COMMON_OPTS[2];
     static const char VERSION_OPT = COMMON_OPTS[3];
     static const char HELP_OPT = COMMON_OPTS[4];
+    static const char APP_OUT_TO_CERR_OPT = COMMON_OPTS[5];
 
     static const char PRINTOUT_PARAMS_OPT = COMMON_DEV_BUILD_OPTS[0];
     static const char PARAMS_TO_LOGFILE_OPT = COMMON_DEV_BUILD_OPTS[1];
@@ -1012,6 +1020,10 @@ public:
 
     void setSequentialMatchingMode() {
         sequentialMatching = true;
+    }
+
+    void setAppOutToCerr() {
+        appOutToCerr = true;
     }
 
     void setBruteParallelMode() {

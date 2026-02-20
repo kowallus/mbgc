@@ -68,6 +68,7 @@ Basic options (for compression, decompression and commons):
         [-E <patternsFile>] exclude files not matching any pattern 
         [-t <noOfThreads>] set limit of used threads
         [-I] ignore FASTA files paths (use only filenames)
+        [-2] redirect app output to stderr
         [-h] print full command help and exit
         [-v] print version number and exit
 
@@ -203,5 +204,7 @@ skipping files not matching any pattern specified in *patterns.txt* file
 * Multithreaded compression ratio (mainly in *speed* and *default* modes) may vary up to ~1% from run to run.
 
 ## Publications
+
+[Tomasz M. Kowalski: MBGC2: Boosting compression via efficient encoding of approximate matches in genome collections (2026). *GigaScience*, Volume 15, 2026, giag008](https://doi.org/10.1093/gigascience/giag008)
 
 [Szymon Grabowski, Tomasz M. Kowalski: MBGC: Multiple Bacteria Genome Compressor (2022). *GigaScience*, Volume 11, 2022, giab099](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giab099/6515740) (concerns first version of MBGC)

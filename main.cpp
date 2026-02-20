@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #endif
 
-#define RELEASE_DATE "2025-12-02"
+#define RELEASE_DATE "2026-02-20"
 
 using namespace std;
 
@@ -30,6 +30,9 @@ void printCommonOpts() {
             "\t[-%c <noOfThreads>] set limit of used threads\n"
             "\t[-%c] ignore FASTA file paths (use only filenames)\n",
             MBGC_Params::NO_OF_THREADS_OPT, MBGC_Params::IGNORE_FASTA_FILES_PATHS_OPT);
+    fprintf(stderr,
+            "\t[-%c] redirect app output to stderr\n",
+            MBGC_Params::APP_OUT_TO_CERR_OPT);
     fprintf(stderr,
             "\t[-%c] print full command help and exit\n"
             "\t[-%c] print version number and exit\n",
@@ -337,6 +340,9 @@ int encodeCommand(std::string base_cmd_name, int argc, char *argv[]) {
             case MBGC_Params::IGNORE_FASTA_FILES_PATHS_OPT:
                 params.ignoreFastaFilesPath = true;
                 break;
+            case MBGC_Params::APP_OUT_TO_CERR_OPT:
+                params.setAppOutToCerr();
+                break;
             case MBGC_Params::VERSION_OPT:
                 printVersion(false);
                 return EXIT_SUCCESS;
@@ -384,7 +390,12 @@ int encodeCommand(std::string base_cmd_name, int argc, char *argv[]) {
     if (params.repackCommand)
         repackInputParams.setInArchiveFileName(argv[optind++]);
     params.setOutArchiveFileName(argv[optind++]);
-    if (params.outArchiveFileName == MBGC_Params::STANDARD_IO_POSIX_ALIAS) {
+    if (params.appOutToCerr) {
+        PgHelpers::appout = &std::cerr;
+#ifdef DEVELOPER_BUILD
+        PgHelpers::devout = &std::cerr;
+#endif
+    } else if (params.outArchiveFileName == MBGC_Params::STANDARD_IO_POSIX_ALIAS) {
         PgHelpers::appout = &null_stream;
         PgHelpers::devout = &null_stream;
     }
@@ -569,6 +580,9 @@ int decodeCommands(std::string base_cmd_name, int argc, char *argv[]) {
             case MBGC_Params::IGNORE_FASTA_FILES_PATHS_OPT:
                 params.ignoreFastaFilesPath = true;
                 break;
+            case MBGC_Params::APP_OUT_TO_CERR_OPT:
+                params.setAppOutToCerr();
+                break;
             case MBGC_Params::VERSION_OPT:
                 printVersion(false);
                 return EXIT_SUCCESS;
@@ -615,7 +629,12 @@ int decodeCommands(std::string base_cmd_name, int argc, char *argv[]) {
 #endif
     params.setInArchiveFileName(argv[optind++]);
     params.setOutputPath(argc > optind ? argv[optind++] : "");
-    if (params.outputPath == MBGC_Params::STANDARD_IO_POSIX_ALIAS) {
+    if (params.appOutToCerr) {
+        PgHelpers::appout = &std::cerr;
+#ifdef DEVELOPER_BUILD
+        PgHelpers::devout = &std::cerr;
+#endif
+    } else  if (params.outputPath == MBGC_Params::STANDARD_IO_POSIX_ALIAS) {
         PgHelpers::appout = &null_stream;
         PgHelpers::devout = &null_stream;
     }
@@ -708,6 +727,9 @@ int appendCommand(std::string base_cmd_name, int argc, char *argv[]) {
             case MBGC_Params::IGNORE_FASTA_FILES_PATHS_OPT:
                 params.ignoreFastaFilesPath = true;
                 break;
+            case MBGC_Params::APP_OUT_TO_CERR_OPT:
+                params.setAppOutToCerr();
+                break;
             case MBGC_Params::VERSION_OPT:
                 printVersion(false);
                 return EXIT_SUCCESS;
@@ -745,7 +767,12 @@ int appendCommand(std::string base_cmd_name, int argc, char *argv[]) {
         params.setSeqListFileName(argv[optind++]);
     params.setInArchiveFileName(argv[optind++]);
     params.setOutArchiveFileName(optind < argc ? argv[optind++] : params.inArchiveFileName);
-    if (params.outArchiveFileName == MBGC_Params::STANDARD_IO_POSIX_ALIAS) {
+    if (params.appOutToCerr) {
+        PgHelpers::appout = &std::cerr;
+#ifdef DEVELOPER_BUILD
+        PgHelpers::devout = &std::cerr;
+#endif
+    } else if (params.outArchiveFileName == MBGC_Params::STANDARD_IO_POSIX_ALIAS) {
         PgHelpers::appout = &null_stream;
         PgHelpers::devout = &null_stream;
     }
