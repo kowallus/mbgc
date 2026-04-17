@@ -293,6 +293,12 @@ string PgHelpers::toString(long double value, unsigned char decimalPlaces) {
     return oss.str();
 }
 
+string PgHelpers::getPartShareString(size_t partLength, size_t totalLength) {
+    return PgHelpers::toString(partLength)
+           + " (" + PgHelpers::toString(((partLength * 100.0) / totalLength) + 0.0005, 3) + "% == x" +
+            PgHelpers::toString((totalLength * 1.0 / partLength + 0.05), 1) + ")";
+}
+
 unsigned long long int PgHelpers::powuint(unsigned long long int base, int exp)
 {
     if (exp == 0) return 1;

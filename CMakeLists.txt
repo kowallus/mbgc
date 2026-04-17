@@ -154,7 +154,7 @@ set(LIBDEFLATE_SOURCES
 
 set(HELPER_FILES
         utils/kseq.h utils/byteswap.h utils/helper.cpp utils/helper.h
-        utils/input_with_libdeflate_wrapper.h utils/igzip_wrapper.h utils/input_with_libdeflate_wrapper.cpp
+        matching/input_with_libdeflate_wrapper.h utils/igzip_wrapper.h matching/input_with_libdeflate_wrapper.cpp
         coders/SymbolsPackingFacility.cpp coders/SymbolsPackingFacility.h
         coders/ContextAwareMismatchesCoder.cpp coders/ContextAwareMismatchesCoder.h)
 
@@ -184,13 +184,15 @@ set(MATCHER_FILES
         matching/TextMatchers.cpp matching/TextMatchers.h
         matching/SlidingWindowSparseEMMatcher.cpp matching/SlidingWindowSparseEMMatcher.h
         matching/SimpleSequenceMatcher.cpp matching/SimpleSequenceMatcher.h
-        matching/copmem/CopMEMMatcher.cpp matching/copmem/CopMEMMatcher.h)
+        matching/copmem/CopMEMMatcher.cpp matching/copmem/CopMEMMatcher.h
+        matching/MultipleGenomeMatchingProcessor.cpp matching/MultipleGenomeMatchingProcessor.h
+        matching/MGMP_Params.h)
 
 set(MBGC_FILES
         ${MATCHER_FILES}
         ${LZMA_FILES}
         ${LIBDEFLATE_SOURCES}
-        mbgccoder/MBGC_API.h
+        matching/MGMP_API.h
         mbgccoder/MBGC_Params.h
         mbgccoder/MBGC_Encoder.cpp mbgccoder/MBGC_Encoder.h
         mbgccoder/MBGC_Decoder.cpp mbgccoder/MBGC_Decoder.h)

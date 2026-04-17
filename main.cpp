@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #endif
 
-#define RELEASE_DATE "2026-02-20"
+#define RELEASE_DATE "2026-04-17"
 
 using namespace std;
 
@@ -204,7 +204,7 @@ int encodeCommand(std::string base_cmd_name, int argc, char *argv[]) {
                 params.forceOverwrite = true;
                 break;
             case MBGC_Params::ALLOW_LOSSY_COMPRESSION_OPT:
-                params.allowLossyCompression = true;
+                params.allowLossyParsing = true;
                 break;
             case MBGC_Params::NO_OF_THREADS_OPT:
                 params.setThreadsLimit(atoi(optarg));
@@ -639,7 +639,7 @@ int decodeCommands(std::string base_cmd_name, int argc, char *argv[]) {
         PgHelpers::devout = &null_stream;
     }
     *PgHelpers::logout << "            \t";
-    MBGC_Decoder_API* decoder = MBGC_Decoder<true>::getInstance(&params, defaultCommandWarning);
+    MGMP_Decoder_API* decoder = MBGC_Decoder<true>::getInstance(&params, defaultCommandWarning);
     decoder->decode();
     delete(decoder);
     if (params.infoCommand)

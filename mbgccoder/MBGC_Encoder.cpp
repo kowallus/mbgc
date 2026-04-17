@@ -1,57 +1,39 @@
 #include "MBGC_Encoder.h"
 
-#include "../utils/kseq.h"
-#include "../utils/input_with_libdeflate_wrapper.h"
-#include <fstream>
-#include "../matching/SimpleSequenceMatcher.h"
 #include <numeric>
 
-KSEQ_INIT(mbgcInFile, mbgcInRead)
+#include "../matching/input_with_libdeflate_wrapper.h"
+#include "../matching/SimpleSequenceMatcher.h"
 
-#define KSEQ_READ(seq) (params->enableDNALineLengthEncoding ? \
-    ( params->allowLossyCompression ? kseq_read_lossy(seq) : kseq_read_lossless_fasta(seq) ): kseq_read(seq))
-
-#define KSEQ_DNA_LINE_LENGTH(seq) (params->enableDNALineLengthEncoding ? \
-    ( params->allowLossyCompression ? seq->maxLastDnaLineLen \
-        : (seq->dnaLineLen == DNA_NOT_WELLFORMED ? 0 : seq->dnaLineLen )) : 0)
-
-
-void validate_kseq_status(string& fileName, kseq_t* seq, int kseq_status)
-{
-    if (kseq_status <= -2) {
-        fprintf(stderr, "Error parsing file %s", fileName.c_str());
-        switch (kseq_status)
-        {
-        case -2:
-        case -3: fprintf(stderr, " - expected FASTA format.\n");
-            break;
-        case -4: fprintf(stderr, "\nDetected inconsistent line length in sequences while processing:\n>%s\n",
-            seq->name.s);
-            break;
-        default: fprintf(stderr, " - unknown error (code %d).\n", kseq_status);
-        }
-        fprintf(stderr, "Consider using lossy compression mode (-%c option).\n", MBGC_Params::ALLOW_LOSSY_COMPRESSION_OPT);
-        exit(EXIT_FAILURE);
-    }
-}
-
-#if !defined(__arm__) && !defined(__aarch64__) && !defined(__ARM_ARCH)
-#include "../libs/asmlib.h"
-#endif
 #include "../coders/PropsLibrary.h"
-#include <omp.h>
 
-MBGC_Encoder::MBGC_Encoder(MBGC_Params *mbgcParams): params(mbgcParams) {
+MBGC_Encoder::MBGC_Encoder(MBGC_Params *mbgcParams):
+    MultipleGenomeMatchingProcessor(mbgcParams), params(mbgcParams) {
 
 }
 
-string readHeader(const kseq_t *seq) {
-    string headersRes(seq->name.s, seq->name.l);
-    if (seq->comment.l) {
-        headersRes.push_back(' ');
-        headersRes.append(seq->comment.s, seq->comment.l);
-    }
-    return headersRes;
+void MBGC_Encoder::print_invalid_kseq_status_message(int kseq_status)
+{
+    fprintf(stderr, "Consider using lossy compression mode (-%c option).\n", MBGC_Params::ALLOW_LOSSY_COMPRESSION_OPT);
+}
+
+void MBGC_Encoder::setProteinsProfile()
+{
+    params->setProteinsCompressionProfile();
+}
+
+void MBGC_Encoder::initStreamsForG0Ref() {
+    targetLiterals.clear();
+    fileHeaders.clear();
+    fileHeadersTemplates.clear();
+    targetLiterals.resize(1);
+    fileHeaders.push_back("");
+    fileHeadersTemplates.push_back("");
+}
+
+void MBGC_Encoder::processG0RefContig(const char *seq, size_t len) {
+    targetLiterals[0].append(seq, len);
+    targetLiterals[0].push_back(MBGC_Params::SEQ_SEPARATOR_MARK);
 }
 
 void MBGC_Encoder::updateHeadersTemplate(uint32_t fileIndex, const string &header) {
@@ -134,155 +116,14 @@ void MBGC_Encoder::processFileName(string &fileName) {
     }
 }
 
-mbgcInFile firstFp;
-bool firstFpIsFirstTarget = false;
-
-void MBGC_Encoder::loadG0Ref(string& refName) {
-    string refStr;
-    int seqCounter = 0;
-
-    firstFp = mbgcInOpen(refName.c_str());
-    if (!params->sequentialMatching) {
-        largestFileLength = firstFp.size;
-        if (singleFastaFileMode) {
-            mbgcInSplit_init(firstFp);
-            mbgcInSplit_next(firstFp, params->MIN_REF_INIT_SIZE, '>');
-        }
-        totalFilesLength += firstFp.size;
-    }
-    kseq_t* seq = kseq_init(firstFp);
-    targetLiterals.resize(1);
-    fileHeaders.push_back("");
-    fileHeadersTemplates.push_back("");
-    int kseq_status = 0;
-    while ((kseq_status = KSEQ_READ(seq)) >= 0) {
-        if (params->uppercaseDNA)
-            PgHelpers::upperSequence(seq->seq.s, seq->seq.l);
-        params->probeProteinsProfile(seq->seq.s, seq->seq.l);
-        largestContigSize = seq->seq.l > largestContigSize ? seq->seq.l : largestContigSize;
-        refStr.append(seq->seq.s, seq->seq.l);
-        targetLiterals[0].append(seq->seq.s, seq->seq.l);
-        targetLiterals[0].push_back(MBGC_Params::SEQ_SEPARATOR_MARK);
-        if (params->sequentialMatching)
-        {
-            int probed_len = seq->seq.l;
-            while (probed_len < MBGC_Params::MIN_PROBE_LEN && ((kseq_status = KSEQ_READ(seq)) >= 0))
-            {
-                params->probeProteinsProfile(seq->seq.s, seq->seq.l);
-                probed_len += seq->seq.l;
-            }
-            validate_kseq_status(refName, seq, kseq_status);
-            break;
-        }
-        string header = readHeader(seq);
-        processHeader(0, header);
-        seqCounter++;
-    }
-    validate_kseq_status(refName, seq, kseq_status);
-    refG0InitPos = refStr.size();
-    *PgHelpers::devout << "loaded reference - " << PgHelpers::time_millis() << " [ms]" << endl;
-    size_t basicRefLength = params->sequentialMatching && !singleFastaFileMode ? firstFp.size : refStr.size();
-    basicRefLength = basicRefLength > params->MIN_BASIC_BLOCK_SIZE ? basicRefLength : params->MIN_BASIC_BLOCK_SIZE;
-    int64_t elementsCount = filesCount;
-    if (singleFastaFileMode) {
-        int64_t remaining_size = firstFp.fileSize -
-            (params->sequentialMatching ? params->MIN_BASIC_BLOCK_SIZE : firstFp.size);
-        elementsCount = 1 + (remaining_size + params->MIN_BASIC_BLOCK_SIZE - 1) / params->MIN_BASIC_BLOCK_SIZE;
-    }
-    params->g0IsTarget = params->sequentialMatching;
-    targetsCount = (params->sequentialMatching && singleFastaFileMode) ? 1 : elementsCount - (params->g0IsTarget ? 0 : 1);
-    if (!params->g0IsTarget && filesCount == 1 && targetsCount < MBGC_Params::SINGLEFILE_PARALLEL_MIN_TARGETS) {
-        fprintf(stderr, "Switching to sequential matching mode (input file too small).\n");
-        largestFileLength = 0;
-        totalFilesLength = 0;
-        largestContigSize = 0;
-        targetLiterals.clear();
-        fileHeaders.clear();
-        fileHeadersTemplates.clear();
-        kseq_destroy(seq);
-        mbgcInClose(firstFp);
-        params->setSequentialMatchingMode();
-        loadG0Ref(refName);
-        return;
-    }
-    if (params->referenceFactor < 1) {
-        int tmp = 15 - (__builtin_clz(elementsCount) / 3);
-        tmp = tmp < 5 ? 5 : (tmp > 12 ? 12 : tmp);
-        params->referenceFactor = (size_t) 1 << tmp;
-    }
-    initMatcher(refStr.data(), refStr.size(), basicRefLength);
-    size_t dnaLineLength = KSEQ_DNA_LINE_LENGTH(seq);
-    kseq_destroy(seq);
-    if (!params->sequentialMatching) {
-        PgHelpers::writeValue<uint32_t>(seqsCountsDest, seqCounter);
-        PgHelpers::writeValue<uint64_t>(dnaLineLengthsDest, dnaLineLength);
-        applyTemplateToHeaders(0);
-        if (!singleFastaFileMode)
-            mbgcInClose(firstFp);
-    } else
-        firstFpIsFirstTarget = true;
-
-    if (basicRefLength > params->AVG_REF_INIT_SIZE * 2)
-        readingBufferSize = 1 + readingBufferSize * params->AVG_REF_INIT_SIZE * 2 / basicRefLength;
-
-    *PgHelpers::appout << "processed reference dataset - " << PgHelpers::time_millis() << " [ms]" << endl;
+void MBGC_Encoder::processTargetMeta(uint32_t seqCount, uint64_t dnaLineLength) {
+    PgHelpers::writeValue<uint32_t>(seqsCountsDest, seqCount);
+    PgHelpers::writeValue<uint64_t>(dnaLineLengthsDest, dnaLineLength);
 }
 
-
-void MBGC_Encoder::initMatcher(const char* refStrPtr, const size_t refStrSize, size_t basicRefLength) {
-    size_t refLengthLimit = params->referenceFactor * basicRefLength;
-    if (!params->appendCommand && !__builtin_ctz((uint32_t) params->k1))
-        params->separateRCBuffer = false;
-    if (!params->appendCommand && (!params->isRCinReferenceDisabled() || (!params->separateRCBuffer)))
-        refLengthLimit *= 2;
-    if (refLengthLimit <= UINT32_MAX)
-        params->enable40bitReference = false;
-    else if (!params->enable40bitReference)
-        refLengthLimit = UINT32_MAX;
-    else if (refLengthLimit > MBGC_Params::REFERENCE_LENGTH_LIMIT)
-        refLengthLimit = MBGC_Params::REFERENCE_LENGTH_LIMIT;
-    if (refLengthLimit > UINT32_MAX)
-        refLengthLimit = UINT32_MAX + (refLengthLimit - UINT32_MAX) / params->bigReferenceCompressorRatio;
-    if (refLengthLimit < refStrSize)
-        refLengthLimit = refStrSize;
-
-    if (__builtin_ctz((uint32_t) params->k1)) {
-        matcher = new SlidingWindowExpSparseEMMatcher(refLengthLimit, params->k, params->k1, params->k2,
-                                                          params->skipMargin);
-    } else {
-        matcher = new SlidingWindowSparseEMMatcher(refLengthLimit, params->k, params->k1, params->k2,
-                                                   params->skipMargin);
-    }
-    if (params->sequentialMatching)
-        matcher->disableSlidingWindow();
-    else
-        matcher->setSlidingWindowSize(params->referenceSlidingWindowFactor);
-    if (!params->circularReference)
-        matcher->disableCircularBuffer();
-    matcher->loadRef(refStrPtr , refStrSize, !params->appendCommand && !params->isRCinReferenceDisabled(),
-                     !params->appendCommand && params->lazyDecompressionSupport, MBGC_Params::REF_REGION_SEPARATOR);
-#ifdef DEVELOPER_BUILD
-    currentRefExtGoal = refG0InitPos * MBGC_Params::INITIAL_REF_EXT_GOAL_FACTOR;
-    refExtLengthPerFile = (refLengthLimit - refStrSize - currentRefExtGoal) /
-                          (filesCount > MBGC_Params::FINAL_REF_EXT_END_MARGIN_FILES ?
-                           (filesCount - MBGC_Params::FINAL_REF_EXT_END_MARGIN_FILES) : 1);
-#endif
-    *PgHelpers::devout << "initial sparseEM reference length: " << matcher->getRefLength() << endl;
-}
-
-size_t unmatchedCharsAll = 0;
 size_t extensionsMatchedCharsAll = 0;
 size_t extensionsMismatchesAll = 0;
-size_t totalMatchedAll = 0;
-size_t totalDestOverlapAll = 0;
-size_t totalDestLenAll = 0;
 size_t removedGapBreakingMatchesAll = 0;
-
-string getTotalMatchStat(size_t totalMatchLength, size_t destLen) {
-    return PgHelpers::toString(totalMatchLength)
-           + " (" + PgHelpers::toString(((totalMatchLength * 100.0) / destLen) + 0.0005, 3) + "% == x" +
-            PgHelpers::toString((destLen * 1.0 / totalMatchLength + 0.05), 1) + ")";
-}
 
 void MBGC_Encoder::processLiteral(char *destPtr, uint32_t pos, uint64_t length, size_t destLen, string &refExtRes) {
     if (params->isLiteralProperForRefExtension(length)) {
@@ -298,8 +139,6 @@ size_t MBGC_Encoder::getMatchLoadedPos(size_t pos) {
         pos += (matcher->getRefLength() - matcher->REF_SHIFT);
     return pos;
 }
-
-size_t PROCESSING_MATCHES_SKIPPED_DUE_TO_CONTIG_DISSIMILARITY = SIZE_MAX;
 
 size_t MBGC_Encoder::processMatches(vector<PgTools::TextMatch>& textMatches, char *destStart, size_t destLen, int targetIdx,
                                     size_t matchingLockPos) {
@@ -360,7 +199,7 @@ size_t MBGC_Encoder::processMatches(vector<PgTools::TextMatch>& textMatches, cha
     textMatches.resize(jj);
     uint64_t literalsLeft = destLen - pos;
     unmatchedChars += literalsLeft;
-    int unmatchedFractionFactor = unmatchedFractionFactors[2 * (appendedTargetsCount + targetIdx)];
+    int unmatchedFractionFactor = unmatchedFractionFactors[2 * (targetsCountShift + targetIdx)];
     if (processedTargetsCount < targetIdx - params->allowedTargetsOutrunForDissimilarContigs &&
             params->isContigDissimilar(destLen, unmatchedChars, unmatchedFractionFactor))
         return PROCESSING_MATCHES_SKIPPED_DUE_TO_CONTIG_DISSIMILARITY;
@@ -617,23 +456,9 @@ void MBGC_Encoder::loadFileNames() {
             }
         }
     }
-    filesCount = fileNames.size();
-    if (!filesCount) {
-        fprintf(stderr, "ERROR: filelist is empty.\n");
-        exit(EXIT_FAILURE);
-    }
-    if (params->interleaveFileOrder)
-        interleaveOrderOfFiles();
-    fileNamesSet.reserve(fileNamesSet.size() + filesCount);
-    for(string& fileName: fileNames)
-        processFileName(fileName);
-    fileNames.erase(std::remove_if(fileNames.begin(), fileNames.end(), [&](const auto &name) { return name.empty(); }),
-                    fileNames.end());
-    filesCount = fileNames.size();
-    if (!filesCount) {
-        fprintf(stderr, "ERROR: no files to add to the archive.\n");
-        exit(EXIT_FAILURE);
-    }
+
+    MultipleGenomeMatchingProcessor::loadFileNames();
+
     if (appendedFilesCount + filesCount == 1) {
         fprintf(stderr, "Switching to single file compression mode.\n");
         singleFastaFileMode = true;
@@ -641,122 +466,18 @@ void MBGC_Encoder::loadFileNames() {
     }
 }
 
-void MBGC_Encoder::interleaveOrderOfFiles() {
-    vector<string> interleaveNames;
-    interleaveNames.reserve(filesCount);
-    int stride = sqrt(filesCount);
-    if (stride == 0)
-        stride = 1;
-    const int group = 1;
-    for(int i = 0; i < stride * group; i += group) {
-        int curr = i;
-        while (curr < filesCount) {
-            for (int g = 0; g < group && curr + g < filesCount; g++)
-                interleaveNames.push_back(fileNames[curr + g]);
-            curr += stride * group;
-        }
-    }
-    fileNames = std::move(interleaveNames);
-}
-
-void MBGC_Encoder::encodeTargetsWithParallelIO() {
-    int l;
+void MBGC_Encoder::initProcessTargetsWithParallelIO() {
     fileHeaders.resize(filesCount);
     fileHeadersTemplates.resize(filesCount);
-    mbgcInFile fp;
-    kseq_t *seq;
-    vector<PgTools::TextMatch> resMatches;
     for(pair<string&, vector<ostringstream>&> p: usedStreamsWithDests) {
         vector<ostringstream> &dests = p.second;
         dests.resize(1);
     }
-    targetRefExtensions.resize(1);
     for(vector<string>* s: usedByteStreams)
         s->resize(1);
-#ifdef DEVELOPER_BUILD
-    targetRefExtensions[0].reserve(refG0InitPos / 16);
-#endif
-    int threadsLimit = PgHelpers::numberOfThreads < MBGC_Params::PARALLELIO_MODE_THREADS_LIMIT ?
-            PgHelpers::numberOfThreads : MBGC_Params::PARALLELIO_MODE_THREADS_LIMIT;
-#pragma omp parallel for ordered schedule(static, 1) private(fp, seq) num_threads(threadsLimit)
-    for(int i = 0; i < filesCount; i++) {
-        int seqCounter = 0;
-        fp = (i || !firstFpIsFirstTarget) ? mbgcInOpen(fileNames[i].c_str()) : mbgcInReset(firstFp);
-        seq = kseq_init(fp);
-#pragma omp ordered
-        {
-            const size_t startPos = matcher->getLoadedRefLength();
-            unmatchedFractionFactors.push_back(params->currentUnmatchedFractionFactor < 256 ? params->currentUnmatchedFractionFactor : 0);
-            unmatchedFractionFactors.push_back(params->unmatchedFractionRCFactor);
-            totalFilesLength += fp.size;
-            largestFileLength = fp.size > largestFileLength ? fp.size : largestFileLength;
-            int kseq_status = 0;
-            while ((kseq_status = KSEQ_READ(seq)) >= 0) {
-                if (params->uppercaseDNA)
-                    PgHelpers::upperSequence(seq->seq.s, seq->seq.l);
-                targetRefExtensions[0].clear();
-                largestContigSize = seq->seq.l > largestContigSize ? seq->seq.l : largestContigSize;
-                string header = readHeader(seq);
-                processHeader(i, header);
-                seqCounter++;
-                char* seqPtr = seq->seq.s;
-                size_t seqLeft = seq->seq.l;
-#ifdef DEVELOPER_BUILD
-                size_t bSize = params->splitContigsIntoBlocks() ? params->SEQ_BLOCK_SIZE : seqLeft;
-#else
-                size_t bSize = seqLeft;
-#endif
-                while (seqLeft > 0) {
-                    bSize = seqLeft < bSize ? seqLeft : bSize;
-                    matcher->matchTexts(resMatches, seqPtr, bSize, false, false, params->k);
-                    resCount += resMatches.size();
-                    size_t currentUnmatched = processMatches(resMatches, seqPtr, bSize, 0);
-                    bool loadContigToRef = params->isContigProperForRefExtension(bSize, currentUnmatched,
-                                                                                 params->currentUnmatchedFractionFactor);
-                    if (loadContigToRef)
-                        largestRefContigSize = bSize > largestRefContigSize ? bSize : largestRefContigSize;
-                    char* extPtr = loadContigToRef ? seqPtr : (char*) targetRefExtensions[0].data();
-                    size_t extSize = loadContigToRef ? bSize : targetRefExtensions[0].size();
-                    bool loadContigRCToRef = !params->isRCinReferenceDisabled() &&
-                            params->isContigProperForRefRCExtension(bSize, currentUnmatched,
-                                                                    params->unmatchedFractionRCFactor);
-                    matcher->loadRef(extPtr, extSize, loadContigRCToRef,
-                                     params->lazyDecompressionSupport, MBGC_Params::REF_REGION_SEPARATOR);
-#ifdef DEVELOPER_BUILD
-                    currentRefExtGoal -= extSize;
-#endif
-                    seqPtr += bSize;
-                    seqLeft -= bSize;
-                }
-                targetLiterals[0].push_back(MBGC_Params::SEQ_SEPARATOR_MARK);
-            }
-            if (params->enableExtensionsWithMismatches)
-                targetGapMismatchesFlags[0].push_back(MBGC_Params::FILE_SEPARATOR_MARK);
-            validate_kseq_status(fileNames[i], seq, kseq_status);
+}
 
-            PgHelpers::writeValue<uint32_t>(seqsCountsDest, seqCounter);
-            PgHelpers::writeValue<uint64_t>(dnaLineLengthsDest, KSEQ_DNA_LINE_LENGTH(seq));
-#ifdef DEVELOPER_BUILD
-            currentRefExtGoal += refExtLengthPerFile;
-            if (currentRefExtGoal > 0)
-                params->relaxUnmatchedFractionFactor();
-            else
-                params->tightenUnmatchedFractionFactor();
-#endif
-            if (params->lazyDecompressionSupport) {
-                matcher->loadSeparator(MBGC_Params::REF_REGION_SEPARATOR);
-                size_t refExtSize = matcher->getLoadedRefLength() - startPos;
-                PgHelpers::writeUInt64Frugal(refExtSizeDest, refExtSize);
-                refExtLoadedPosArr.emplace_back(refExtLoadedPosArr.back() + refExtSize);
-            }
-            size_t tmp = matcher->acquireWorkerMatchingLockPos();
-            locksPosStream.append((char*) &tmp, sizeof(tmp));
-            matcher->releaseWorkerMatchingLockPos(tmp);
-        }
-        kseq_destroy(seq);
-        mbgcInClose(fp);
-        applyTemplateToHeaders(i);
-    }
+void MBGC_Encoder::finalizeProcessTargetsWithParallelIO() {
     for(pair<string&, vector<ostringstream>&> p: usedStreamsWithDests) {
         string &stream = p.first;
         vector<ostringstream> &dests = p.second;
@@ -765,368 +486,82 @@ void MBGC_Encoder::encodeTargetsWithParallelIO() {
     }
 }
 
-vector<mbgcInFile> fps;
+void MBGC_Encoder::processAfterSequence(uint32_t targetIdx) {
+    targetLiterals[targetIdx].push_back(MBGC_Params::SEQ_SEPARATOR_MARK);
+}
 
-void MBGC_Encoder::initParallelEncoding() {
+void MBGC_Encoder::processAfterTarget(uint32_t targetIdx) {
+    if (params->enableExtensionsWithMismatches)
+        targetGapMismatchesFlags[targetIdx].push_back(MBGC_Params::FILE_SEPARATOR_MARK);
+}
+
+void MBGC_Encoder::processAfterTargetWithParallelIO(size_t matcherLoaderStartPos) {
+    processAfterTarget(0);
+    if (params->lazyDecompressionSupport) {
+        matcher->loadSeparator(MBGC_Params::REF_REGION_SEPARATOR);
+        size_t refExtSize = matcher->getLoadedRefLength() - matcherLoaderStartPos;
+        PgHelpers::writeUInt64Frugal(refExtSizeDest, refExtSize);
+        refExtLoadedPosArr.emplace_back(refExtLoadedPosArr.back() + refExtSize);
+    }
+    size_t tmp = matcher->acquireWorkerMatchingLockPos();
+    locksPosStream.append((char*) &tmp, sizeof(tmp));
+    matcher->releaseWorkerMatchingLockPos(tmp);
+}
+
+void MBGC_Encoder::initProcessTarget(uint32_t targetIdx) {
+    targetLiterals[targetIdx].reserve(refG0InitPos / 32);
+}
+
+
+void MBGC_Encoder::initParallelProcessing() {
+    MultipleGenomeMatchingProcessor::initParallelProcessing();
     fileHeaders.resize(singleFastaFileMode ? targetsCount + targetsShift : filesCount);
     fileHeadersTemplates.resize(singleFastaFileMode ? targetsCount + targetsShift : filesCount);
-    if (singleFastaFileMode)
-        fileNames.resize(targetsCount + targetsShift, fileNames[0] );
-    unmatchedFractionFactors.resize(2 * (appendedTargetsCount + targetsCount));
-    targetRefExtensions.resize(targetsCount);
     for(vector<string>* s: usedByteStreams)
         s->resize(targetsCount);
     for(pair<string&, vector<ostringstream>&> p: usedStreamsWithDests) {
         vector<ostringstream> &dests = p.second;
         dests.resize(targetsCount);
     }
-    seqsCounts.resize(targetsCount, 0);
-    dnaLineLength.resize(targetsCount, 0);
-    matchingLocksPos.resize(targetsCount, SIZE_MAX);
-    fps.resize(targetsCount);
-    processedTargetsCount = 0;
     if (params->lazyDecompressionSupport)
-        refExtLoadedPosArr.reserve(appendedTargetsCount + targetsCount + targetsShift);
+        refExtLoadedPosArr.reserve(targetsCountShift + targetsCount + targetsShift);
 }
 
-void MBGC_Encoder::finalizeParallelEncodingInSingleFastaFileMode() {
+void MBGC_Encoder::finalizeParallelProcessingInSingleFastaFileMode() {
+    MultipleGenomeMatchingProcessor::finalizeParallelProcessingInSingleFastaFileMode();
     fileHeaders.resize(targetsCount + targetsShift);
     fileHeadersTemplates.resize(targetsCount + targetsShift);
-    fileNames.resize(targetsCount + targetsShift);
-    unmatchedFractionFactors.resize(2 * (appendedTargetsCount + targetsCount));
-    targetRefExtensions.resize(targetsCount);
     for(pair<string&, vector<ostringstream>&> p: usedStreamsWithDests) {
         vector<ostringstream> &dests = p.second;
         dests.resize(targetsCount);
     }
     for(vector<string>* s: usedByteStreams)
         s->resize(targetsCount);
-    seqsCounts.resize(targetsCount);
-    dnaLineLength.resize(targetsCount);
-    matchingLocksPos.resize(targetsCount);
-    fps.resize(targetsCount);
 }
 
-inline void MBGC_Encoder::encodeTargetSequence(int i, bool calledByMaster) {
-    uint32_t resCount = 0;
-    uint32_t largestRefContigSize = 0;
-    uint32_t largestContigSize= 0;
-    mbgcInFile& fp = fps[i];
-    int l;
-    vector<TextMatch> resMatches;
-    targetRefExtensions[i].reserve(refG0InitPos / 16);
-    targetLiterals[i].reserve(refG0InitPos / 32);
-    kseq_t* seq = kseq_init(fp);
-    int unmatchedFractionFactor = params->currentUnmatchedFractionFactor;
-    unmatchedFractionFactors[2 * (appendedTargetsCount + i)] = unmatchedFractionFactor < 256 ? unmatchedFractionFactor : 0;
-    unmatchedFractionFactors[2 * (appendedTargetsCount + i) + 1] = params->unmatchedFractionRCFactor;
-#pragma omp critical(acquireWorkerMatchingLockPos)
-    {
-        int64_t j = i;
-        while (j >= 0 && matchingLocksPos[j] == SIZE_MAX)
-            matchingLocksPos[j--] = matcher->acquireWorkerMatchingLockPos();
-    }
-    int kseq_status = 0;
-    while ((kseq_status = KSEQ_READ(seq)) >= 0) {
-        if (params->uppercaseDNA)
-            PgHelpers::upperSequence(seq->seq.s, seq->seq.l);
-        largestContigSize = seq->seq.l > largestContigSize ? seq->seq.l : largestContigSize;
-        string header = readHeader(seq);
-        processHeader(i + targetsShift, header);
-        seqsCounts[i]++;
-        char* seqPtr = seq->seq.s;
-        size_t seqLeft = seq->seq.l;
-#ifdef DEVELOPER_BUILD
-        size_t bSize = params->splitContigsIntoBlocks() ? params->SEQ_BLOCK_SIZE : seqLeft;
-#else
-        size_t bSize = seqLeft;
-#endif
-        while (processedTargetsCount < i - allowedTargetsOutrun)
-            nanosleep(SLEEP_TIME, nullptr);
-        while (seqLeft > 0) {
-            size_t extRefPos = targetRefExtensions[i].size();
-            bSize = seqLeft < bSize ? seqLeft : bSize;
-            matcher->matchTexts(resMatches, seqPtr, bSize, false, false, params->k, matchingLocksPos[i]);
-            resCount += resMatches.size();
-            size_t currentUnmatched = processMatches(resMatches, seqPtr, bSize, i, matchingLocksPos[i]);
-            if (currentUnmatched == PROCESSING_MATCHES_SKIPPED_DUE_TO_CONTIG_DISSIMILARITY) {
-                resCount -= resMatches.size();
-                resMatches.clear();
-                while (processedTargetsCount < i - params->allowedTargetsOutrunForDissimilarContigs)
-                    nanosleep(SLEEP_TIME, nullptr);
-                continue;
-            }
-            if (params->isContigProperForRefExtension(bSize, currentUnmatched, unmatchedFractionFactor)) {
-                largestRefContigSize = bSize > largestRefContigSize ? bSize : largestRefContigSize;
-                targetRefExtensions[i].append(seqPtr, bSize);
-            }
-            if (!params->isRCinReferenceDisabled() && params->contigsIndivduallyReversed &&
-                    params->isContigProperForRefRCExtension(bSize, currentUnmatched, params->unmatchedFractionRCFactor)) {
-                targetRefExtensions[i].resize(targetRefExtensions[i].size() + bSize);
-                char* rcPtr = targetRefExtensions[i].data() + targetRefExtensions[i].size() - bSize;
-                PgHelpers::upperReverseComplement(rcPtr - bSize, bSize, rcPtr);
-            }
-            seqPtr += bSize;
-            seqLeft -= bSize;
-        }
-        targetLiterals[i].push_back(MBGC_Params::SEQ_SEPARATOR_MARK);
-    }
-    if (params->enableExtensionsWithMismatches)
-        targetGapMismatchesFlags[i].push_back(MBGC_Params::FILE_SEPARATOR_MARK);
-    validate_kseq_status(fileNames[i + targetsShift], seq, kseq_status);
-    dnaLineLength[i] = KSEQ_DNA_LINE_LENGTH(seq);
-    kseq_destroy(seq);
-#pragma omp critical(encodingStatsBlock)
-    {
-        this->resCount += resCount;
-        this->largestRefContigSize = this->largestRefContigSize > largestRefContigSize ?
-                                     this->largestRefContigSize: largestRefContigSize;
-        this->largestContigSize = this->largestContigSize > largestContigSize ?
-                                  this->largestContigSize: largestContigSize;
-        largestFileLength = fp.size > largestFileLength ? fp.size : largestFileLength;
-        totalFilesLength += fp.size;
-    }
-    if (!singleFastaFileMode)
-        mbgcInClose(fp);
-    fileNames[i + targetsShift].clear();
-    if (calledByMaster)
-#pragma omp atomic
-        masterTargetsStats++;
-    else
-#pragma omp atomic
-        taskTargetsStats++;
-    finalizeParallelEncodingOfTarget(calledByMaster);
-    applyTemplateToHeaders(i + targetsShift);
-}
-
-omp_lock_t finalizingLock;
-
-inline int MBGC_Encoder::finalizeParallelEncodingOfTarget(bool calledByMaster) {
-    int counter = 0;
-    int64_t tmp = processedTargetsCount;
-    if (tmp < targetsCount && fileNames[tmp + targetsShift].empty())
-        if (omp_test_lock(&finalizingLock)) {
-            int64_t e = processedTargetsCount;
-            while (e < targetsCount && fileNames[e + targetsShift].empty()) {
-                const size_t startPos = matcher->getLoadedRefLength();
-                matcher->loadRef(targetRefExtensions[e].data(), targetRefExtensions[e].size(),
-                                 !params->isRCinReferenceDisabled() && !params->contigsIndivduallyReversed,
-                                 params->lazyDecompressionSupport, MBGC_Params::REF_REGION_SEPARATOR);
-#ifdef DEVELOPER_BUILD
-                currentRefExtGoal -= targetRefExtensions[e].size();
-                currentRefExtGoal += refExtLengthPerFile;
-                if (currentRefExtGoal > 0)
-                    params->relaxUnmatchedFractionFactor();
-                else
-                    params->tightenUnmatchedFractionFactor();
-#endif
-                targetRefExtensions[e].clear();
-                targetRefExtensions[e].shrink_to_fit();
-                PgHelpers::writeValue<uint32_t>(seqsCountsDest, seqsCounts[e]);
-                PgHelpers::writeValue<uint64_t>(dnaLineLengthsDest, dnaLineLength[e]);
-                for (vector<string> *s: usedByteStreams) {
-                    if (e) {
-                        (*s)[0].append((*s)[e]);
-                        (*s)[e].clear();
-                        (*s)[e].shrink_to_fit();
-                    }
-                }
-                for (pair<string &, vector<ostringstream> &> p: usedStreamsWithDests) {
-                    string &stream = p.first;
-                    vector<ostringstream> &dests = p.second;
-                    stream.append(dests[e].str());
-                    dests[e].str("");
-                    dests[e].clear();
-                }
-                if (params->lazyDecompressionSupport) {
-                    matcher->loadSeparator(MBGC_Params::REF_REGION_SEPARATOR);
-                    size_t refExtSize = matcher->getLoadedRefLength() - startPos;
-                    PgHelpers::writeUInt64Frugal(refExtSizeDest, refExtSize);
-                    refExtLoadedPosArr.emplace_back(matcher->getLoadedRefLength());
-                }
-                locksPosStream.append((char *) &matchingLocksPos[e], sizeof(matchingLocksPos[e]));
-                matcher->releaseWorkerMatchingLockPos(matchingLocksPos[e]);
-                e++;
-                counter++;
-                processedTargetsCount = e;
-            }
-            if (calledByMaster)
-                masterRefExtensionsStats += counter;
-            else
-                taskRefExtensionsStats += counter;
-            omp_unset_lock(&finalizingLock);
-        }
-    return counter;
-}
-
-void MBGC_Encoder::tryClaimAndProcessTarget(bool calledByMaster) {
-    int i = targetsCount;
-#pragma omp critical(claimTargetBlock)
-    {
-        if (claimedTargetsCount < targetsCount) {
-            int thread_no = claimedTargetsCount % readingThreadsCount;
-            if (out[thread_no] != in[thread_no]) {
-                i = claimedTargetsCount++;
-                out[thread_no] += readingThreadsCount;
-            }
+void MBGC_Encoder::finalizeParallelProcessingOfTarget(uint32_t targetIdx, size_t matcherLoaderStartPos) {
+    for (vector<string> *s: usedByteStreams) {
+        if (targetIdx) {
+            (*s)[0].append((*s)[targetIdx]);
+            (*s)[targetIdx].clear();
+            (*s)[targetIdx].shrink_to_fit();
         }
     }
-    if (i < targetsCount)
-        encodeTargetSequence(i, calledByMaster);
-    else if (!finalizeParallelEncodingOfTarget(calledByMaster))
-        nanosleep(SLEEP_TIME, nullptr);
-}
-
-void MBGC_Encoder::readFilesParallelTask(const int thread_no) {
-    if (singleFastaFileMode) {
-        int64_t i = 0;
-        while (claimedTargetsCount < targetsCount) {
-            if (thread_no == readingThreadsCount - 1) {
-                int64_t t = i % readingThreadsCount;
-                if (in[t] < targetsCount && in[t] < out[t] + readingThreadsCount * readingBufferSize) {
-                    fps[in[t]] = mbgcInSplit_next(firstFp, params->MIN_BASIC_BLOCK_SIZE, '>');
-                    if (fps[in[t]].size == 0)
-                        targetsCount = in[t];
-                    else {
-                        in[t] += readingThreadsCount;
-                        i++;
-                    }
-                    continue;
-                }
-            }
-            tryClaimAndProcessTarget(false);
-        }
-    } else {
-        while (claimedTargetsCount < targetsCount) {
-            if (in[thread_no] < targetsCount &&
-                in[thread_no] < out[thread_no] + readingThreadsCount * readingBufferSize) {
-                fps[in[thread_no]] = (in[thread_no] || !firstFpIsFirstTarget) ?
-                                     mbgcInOpen(fileNames[in[thread_no] + targetsShift].c_str()) : mbgcInReset(firstFp);
-                in[thread_no] += readingThreadsCount;
-            } else
-                tryClaimAndProcessTarget(false);
-        }
-    }
-}
-
-void MBGC_Encoder::encodeTargetsParallel() {
-    omp_init_lock(&finalizingLock);
-    initParallelEncoding();
-#pragma omp parallel
-    {
-#pragma omp single
-        {
-            if (params->matcherWorkingThreads > PgHelpers::numberOfThreads)
-                params->matcherWorkingThreads = PgHelpers::numberOfThreads;
-            readingThreadsCount = params->matcherWorkingThreads - 1;
-            if (readingThreadsCount > targetsCount / readingBufferSize)
-                readingThreadsCount = targetsCount ? (((int64_t) targetsCount - 1) / readingBufferSize) + 1 : 0;
-            allowedTargetsOutrun = params->matcherWorkingThreads * (int) params->allowedTargetsOutrunFactor;
-            out.resize(readingThreadsCount);
-            in.resize(readingThreadsCount);
-            claimedTargetsCount = 0;
-            for (int i = 0; i < readingThreadsCount; i++) {
-                out[i] = i;
-                in[i] = i;
-#pragma omp task
-                {
-                    readFilesParallelTask(i);
-                }
-                nanosleep(SLEEP_TIME, nullptr);
-            }
-            while (processedTargetsCount != targetsCount) {
-                tryClaimAndProcessTarget(true);
-            }
-        }
-    }
-    if (singleFastaFileMode) {
-        mbgcInClose(firstFp);
-        finalizeParallelEncodingInSingleFastaFileMode();
-    }
-    omp_destroy_lock(&finalizingLock);
-}
-
-void MBGC_Encoder::encodeTargetsBruteParallel() {
-    initParallelEncoding();
-#pragma omp parallel for ordered schedule(static, 1) num_threads(params->matcherWorkingThreads)
-    for(int i = 0; i < targetsCount; i++) {
-        fps[i] = mbgcInOpen(fileNames[i + targetsShift].c_str());
-        encodeTargetSequence(i, false);
-    }
-    finalizeParallelEncodingOfTarget(false);
-}
-
-
-void MBGC_Encoder::performMatching() {
-    if (params->currentUnmatchedFractionFactor < params->unmatchedFractionRCFactor) {
-        fprintf(stderr, "WARNING: %c cannot be smaller than %c. Decreased %c down to %d.\n",
-                MBGC_Params::UNMATCHED_FRACTION_FACTOR_OPT, MBGC_Params::UNMATCHED_FRACTION_RC_FACTOR_OPT,
-                MBGC_Params::UNMATCHED_FRACTION_RC_FACTOR_OPT, params->currentUnmatchedFractionFactor);
-        params->unmatchedFractionRCFactor = params->currentUnmatchedFractionFactor;
-    }
-    if (params->matcherWorkingThreads > PgHelpers::numberOfThreads) {
-        fprintf(stderr, "WARNING: %c cannot be larger than number of threads limit. Decreased %c down to %d.\n",
-                MBGC_Params::MATCHER_NO_OF_THREADS_OPT,
-                MBGC_Params::MATCHER_NO_OF_THREADS_OPT, PgHelpers::numberOfThreads);
-        params->matcherWorkingThreads = PgHelpers::numberOfThreads;
-    }
-    enrollByteStream(targetLiterals);
-    enrollStream(mapOffStream, targetMapOffDests);
-    if (params->enable40bitReference)
-        enrollByteStream(targetMapOff5thByte);
-    enrollStream(mapLenStream, targetMapLenDests);
-    enrollByteStream(targetGapDeltas);
-    if (params->enableExtensionsWithMismatches) {
-        enrollByteStream(targetGapMismatchesFlags);
-        params->initMismatchesMatchingScoreParams();
+    for (pair<string &, vector<ostringstream> &> p: usedStreamsWithDests) {
+        string &stream = p.first;
+        vector<ostringstream> &dests = p.second;
+        stream.append(dests[targetIdx].str());
+        dests[targetIdx].str("");
+        dests[targetIdx].clear();
     }
     if (params->lazyDecompressionSupport) {
-        refExtLoadedPosArr.emplace_back(matcher->getLoadingPosition());
+        matcher->loadSeparator(MBGC_Params::REF_REGION_SEPARATOR);
+        size_t refExtSize = matcher->getLoadedRefLength() - matcherLoaderStartPos;
+        PgHelpers::writeUInt64Frugal(refExtSizeDest, refExtSize);
+        refExtLoadedPosArr.emplace_back(matcher->getLoadedRefLength());
     }
-    if (params->sequentialMatching)
-        encodeTargetsWithParallelIO();
-    else if (params->bruteParallel)
-        encodeTargetsBruteParallel();
-    else if (targetsCount)
-        encodeTargetsParallel();
-    else {
-        fprintf(stderr, "Error selecting encoding mode (no targets for parallel matching?)!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    *PgHelpers::devout << endl << "encoded targets count: " << targetsCount << endl;
-    if (PgHelpers::numberOfThreads > 1 && !params->sequentialMatching && !params->bruteParallel) {
-        *PgHelpers::devout << "targets encoded by - master: " << masterTargetsStats << " / (" << readingThreadsCount << ")tasks: " <<
-                           taskTargetsStats << " (check: " << (masterTargetsStats + taskTargetsStats) << ")" << endl;
-        *PgHelpers::devout << "ref extensions loaded by - master: " << masterRefExtensionsStats << " / (" << readingThreadsCount << ")tasks: " <<
-                           taskRefExtensionsStats << " (check: " << (masterRefExtensionsStats + taskRefExtensionsStats) << ")" << endl;
-    }
-
-    refFinalTotalLength = matcher->getRefLength();
-    size_t loadedRefTotalLength = matcher->getLoadedRefLength();
-    delete(matcher);
-    *PgHelpers::devout << "sparseEM reference length: " << refFinalTotalLength << endl;
-    *PgHelpers::devout << "loaded reference total length: " << loadedRefTotalLength << endl;
-    *PgHelpers::devout << "largest reference contig length: " << largestRefContigSize << endl;
-    *PgHelpers::devout << "largest contig length: " << largestContigSize << endl;
-    *PgHelpers::devout << "targets dna total length: " << totalDestLenAll << endl;
-    *PgHelpers::devout << "exact matches total: " << resCount << endl;
-    *PgHelpers::devout << "swsMEM unmatched chars: " << unmatchedCharsAll << " (removed: " <<
-                       getTotalMatchStat(totalMatchedAll, totalDestLenAll) << "; " << totalDestOverlapAll << " chars in overlapped target symbol)" << endl;
-    if (params->enableExtensionsWithMismatches) {
-        *PgHelpers::devout << "removed matches breaking gaps total: " << removedGapBreakingMatchesAll << endl;
-        *PgHelpers::devout << "extensions matched chars: " << extensionsMatchedCharsAll << endl;
-        *PgHelpers::devout << "extensions mismatched chars: ~" <<
-                           getTotalMatchStat(extensionsMismatchesAll,
-                                             extensionsMatchedCharsAll + extensionsMismatchesAll) << endl;
-        *PgHelpers::devout << "final unmatched chars: " << (unmatchedCharsAll - extensionsMatchedCharsAll)
-                           << " (removed: " <<
-                           getTotalMatchStat(totalMatchedAll + extensionsMatchedCharsAll, totalDestLenAll) << ")"
-                           << endl;
-    }
-    *PgHelpers::appout << "matching finished - " << PgHelpers::time_millis() << " [ms]" << endl << endl;
-    *PgHelpers::logout << PgHelpers::time_millis() << "       \t";
-}
+    locksPosStream.append((char *) &matchingLocksPos[targetIdx], sizeof(matchingLocksPos[targetIdx]));
+};
 
 void MBGC_Encoder::applyTemplateToHeaders(uint32_t fileIdx) {
     vector<size_t> matchesPos;
@@ -1290,7 +725,7 @@ void MBGC_Encoder::prepareAndCompressStreams() {
         };
     }
     *PgHelpers::devout << endl;
-    *PgHelpers::appout << "compressed " << totalFilesLength << " bytes to " << getTotalMatchStat(outSize, totalFilesLength) << endl;
+    *PgHelpers::appout << "compressed " << totalFilesLength << " bytes to " << PgHelpers::getPartShareString(outSize, totalFilesLength) << endl;
     *PgHelpers::logout << PgHelpers::time_millis() << "       \t";
     *PgHelpers::logout << PgHelpers::toString((totalFilesLength * 1.0 / outSize + 0.05), 1) << "\t";
     *PgHelpers::logout << totalFilesLength << "\t" << outSize << "\t";
@@ -1305,6 +740,20 @@ void MBGC_Encoder::writeStats(ostream &out) const {
     PgHelpers::writeValue(out, refFinalTotalLength);
     PgHelpers::writeValue(out, refBuffersCount);
     PgHelpers::writeValue(out, (uint64_t) targetLiterals[0].size());
+}
+
+void MBGC_Encoder::printAdditionalMatchingStats() {
+    if (params->enableExtensionsWithMismatches) {
+        *PgHelpers::devout << "removed matches breaking gaps total: " << removedGapBreakingMatchesAll << endl;
+        *PgHelpers::devout << "extensions matched chars: " << extensionsMatchedCharsAll << endl;
+        *PgHelpers::devout << "extensions mismatched chars: ~" <<
+                           PgHelpers::getPartShareString(extensionsMismatchesAll,
+                                             extensionsMatchedCharsAll + extensionsMismatchesAll) << endl;
+        *PgHelpers::devout << "final unmatched chars: " << (unmatchedCharsAll - extensionsMatchedCharsAll)
+                           << " (removed: " <<
+                           PgHelpers::getPartShareString(totalMatchedAll + extensionsMatchedCharsAll, totalDestLenAll) << ")"
+                           << endl;
+    }
 }
 
 void MBGC_Encoder::encode() {
@@ -1326,6 +775,31 @@ void MBGC_Encoder::encode() {
         singleFastaFileMode = !params->inputFileName.empty();
         loadFileNames();
         loadG0Ref(fileNames[0]);
+    }
+    enrollByteStream(targetLiterals);
+    enrollStream(mapOffStream, targetMapOffDests);
+    if (params->enable40bitReference)
+        enrollByteStream(targetMapOff5thByte);
+    enrollStream(mapLenStream, targetMapLenDests);
+    enrollByteStream(targetGapDeltas);
+    if (params->enableExtensionsWithMismatches) {
+        enrollByteStream(targetGapMismatchesFlags);
+        params->initMismatchesMatchingScoreParams();
+    }
+    if (params->lazyDecompressionSupport) {
+        refExtLoadedPosArr.emplace_back(matcher->getLoadingPosition());
+    }
+    if (params->currentUnmatchedFractionFactor < params->unmatchedFractionRCFactor) {
+        fprintf(stderr, "WARNING: %c cannot be smaller than %c. Decreased %c down to %d.\n",
+                MBGC_Params::UNMATCHED_FRACTION_FACTOR_OPT, MBGC_Params::UNMATCHED_FRACTION_RC_FACTOR_OPT,
+                MBGC_Params::UNMATCHED_FRACTION_RC_FACTOR_OPT, params->currentUnmatchedFractionFactor);
+        params->unmatchedFractionRCFactor = params->currentUnmatchedFractionFactor;
+    }
+    if (params->matcherWorkingThreads > PgHelpers::numberOfThreads) {
+        fprintf(stderr, "WARNING: %c cannot be larger than number of threads limit. Decreased %c down to %d.\n",
+                MBGC_Params::MATCHER_NO_OF_THREADS_OPT,
+                MBGC_Params::MATCHER_NO_OF_THREADS_OPT, PgHelpers::numberOfThreads);
+        params->matcherWorkingThreads = PgHelpers::numberOfThreads;
     }
     performMatching();
 
@@ -1371,7 +845,7 @@ void MBGC_Encoder::appendTemplate(MBGC_Decoder<lazyMode>* decoder, MBGC_Params& 
 
     singleFastaFileMode = !params->inputFileName.empty();
     appendedFilesCount = singleFastaFileMode ? 0 : decoder->filesCount;
-    appendedTargetsCount = decoder->targetsCount;
+    targetsCountShift = decoder->targetsCount;
     totalFilesLength = decoder->totalFilesLength;
     refG0InitPos = decoder->refG0InitPos;
     largestFileLength = decoder->largestFileLength;
@@ -1381,11 +855,10 @@ void MBGC_Encoder::appendTemplate(MBGC_Decoder<lazyMode>* decoder, MBGC_Params& 
     loadFileNames();
     string refStr = std::move(decoder->refStr);
     size_t initialRefLength = refStr.size();
-    firstFp = mbgcInOpen(fileNames[0].c_str());
-    firstFpIsFirstTarget = true;
+    size_t fileSize = openFirstFile(fileNames[0].c_str(), true);
     if (decoder->reachedRefLengthCount == 0) {
         int64_t targetsProportion = singleFastaFileMode ?
-                                (((int64_t) firstFp.fileSize) - 1) / ((int64_t) initialRefLength) + 1 :
+                                (((int64_t) fileSize) - 1) / ((int64_t) initialRefLength) + 1 :
                                 filesCount / appendedFilesCount + 1;
         int tmp = 15 - (__builtin_clz(targetsProportion) / 3);
         tmp = tmp < 5 ? 5 : (tmp > 12 ? 12 : tmp);
@@ -1399,13 +872,13 @@ void MBGC_Encoder::appendTemplate(MBGC_Decoder<lazyMode>* decoder, MBGC_Params& 
     if (params->g0IsTarget || params->matcherWorkingThreads == 1)
         params->setSequentialMatchingMode();
     if (!params->sequentialMatching && singleFastaFileMode)
-        mbgcInSplit_init(firstFp);
+        switchToSplitIterMode();
     size_t basicRefLength = refG0InitPos;
     basicRefLength = basicRefLength > params->MIN_BASIC_BLOCK_SIZE ? basicRefLength : params->MIN_BASIC_BLOCK_SIZE;
     targetsCount = singleFastaFileMode && !params->sequentialMatching ?
-        (((int64_t) firstFp.fileSize) + basicRefLength - 1) / basicRefLength : filesCount;
+        (((int64_t) fileSize) + basicRefLength - 1) / basicRefLength : filesCount;
     targetsShift = 0;
-    initMatcher(refStr.data() + 1, refStr.size() - 1, initialRefLength);
+    initMatcher(refStr.data() + 1, refStr.size() - 1, initialRefLength, true);
     if (decoder->reachedRefLengthCount > 0) {
         matcher->setPosition(decoder->refPos, decoder->reachedRefLengthCount);
     }
@@ -1417,7 +890,7 @@ void MBGC_Encoder::appendTemplate(MBGC_Decoder<lazyMode>* decoder, MBGC_Params& 
 }
 
 void MBGC_Encoder::append(MBGC_Params& newParams) {
-    MBGC_Decoder_API* decoder = MBGC_Decoder<true>::getInstance(params);
+    MGMP_Decoder_API* decoder = MBGC_Decoder<true>::getInstance(params);
     params->engageAppendCommand();
     if (params->isLazyDecompressionEnabled())
         appendTemplate<true>((MBGC_Decoder<true>*) decoder, newParams);
@@ -1435,7 +908,7 @@ void MBGC_Encoder::repackTemplate(MBGC_Decoder<lazyMode>* decoder) {
 }
 
 void MBGC_Encoder::repack(MBGC_Params& inParams) {
-    MBGC_Decoder_API* decoder = MBGC_Decoder<true>::getInstance(&inParams);
+    MGMP_Decoder_API* decoder = MBGC_Decoder<true>::getInstance(&inParams);
     if (params->isLazyDecompressionEnabled())
         repackTemplate<true>((MBGC_Decoder<true>*) decoder);
     else

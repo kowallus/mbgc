@@ -14,9 +14,9 @@
 #include <fcntl.h>
 #endif
 
-#include "../utils/input_with_libdeflate_wrapper.h"
+#include "../matching/input_with_libdeflate_wrapper.h"
 
-template<bool lazyMode> MBGC_Decoder<lazyMode>::MBGC_Decoder(MBGC_Params *mbgcParams, istream* inStream): MBGC_Decoder_API(), params(mbgcParams), inStream(inStream) {
+template<bool lazyMode> MBGC_Decoder<lazyMode>::MBGC_Decoder(MBGC_Params *mbgcParams, istream* inStream): MGMP_Decoder_API(), params(mbgcParams), inStream(inStream) {
     if (lazyMode && !mbgcParams->isLazyDecompressionEnabled()) {
         fprintf(stderr, "ERROR: Using unsupported lazy decompression mode\n");
         exit(EXIT_FAILURE);
@@ -24,7 +24,7 @@ template<bool lazyMode> MBGC_Decoder<lazyMode>::MBGC_Decoder(MBGC_Params *mbgcPa
 }
 
 template<bool lazyMode>
-MBGC_Decoder_API *MBGC_Decoder<lazyMode>::getInstance(MBGC_Params *params, string optionalWarning) {
+MGMP_Decoder_API *MBGC_Decoder<lazyMode>::getInstance(MBGC_Params *params, string optionalWarning) {
     istream* in;
     if (params->isStdinMode(true)) {
 #ifdef __MINGW32__
@@ -129,7 +129,7 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::moveToFile(const string& fi
                 }
             }
             if (ok) {
-                mbgcInFile file = mbgcInOpen(tmpfile.c_str());
+                mgmpInFile file = mgmpInOpen(tmpfile.c_str());
                 if (src.size() != file.size) {
                     if (params->invalidFilesCount < MBGC_Params::VALIDATION_LOG_LIMIT)
                         *PgHelpers::devout << "Validation ERROR: ~" << (params->invalidFilesCount + params->validFilesCount) <<
@@ -169,7 +169,7 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::moveToFile(const string& fi
                     } else
                         *PgHelpers::devout << "Error in FASTA format - no sequences found in equal part." << endl;
                 }
-                mbgcInClose(file);
+                mgmpInClose(file);
             }
         }
         src.clear();
@@ -1360,7 +1360,8 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::initLazyDecompression() {
     threadLitRefExtPos.resize(threadsCount);
     threadLitRefExtLen.resize(threadsCount);
 #endif
-    copyStreamsPositions(MASTER_THREAD_ID, 1);
+    if (targetsCount > 1)
+        copyStreamsPositions(MASTER_THREAD_ID, 1);
 }
 
 template<bool lazyMode> int MBGC_Decoder<lazyMode>::findStreamsPositions(int prevTargetSrcId, int startTargetIdx, int endTargetIdx, size_t namesEndGuard) {

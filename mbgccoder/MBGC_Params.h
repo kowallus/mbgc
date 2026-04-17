@@ -1,18 +1,18 @@
 #ifndef MBGC_MBGCPARAMS_H
 #define MBGC_MBGCPARAMS_H
 
-#include <string>
+#include "../matching/MGMP_Params.h"
+
 #include "../coders/CodersLib.h"
-#include <omp.h>
 
 using namespace std;
 
-class MBGC_Params {
+class MBGC_Params: public MGMP_Params {
 public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 2;
     static const char MBGC_VERSION_MINOR = 1;
-    static const char MBGC_VERSION_REVISION = 1;
+    static const char MBGC_VERSION_REVISION = 2;
 
     char mbgcVersionMajor = MBGC_VERSION_MAJOR;
     char mbgcVersionMinor = MBGC_VERSION_MINOR;
@@ -21,29 +21,21 @@ public:
     static constexpr char *const MBGC_HEADER = (char*) "MBGC";
     static constexpr char *const TEMPORARY_FILE_SUFFIX = (char*) ".temp";
 
-    static constexpr char *const STANDARD_IO_POSIX_ALIAS = (char*) "-";
-
     const static uint8_t SPEED_CODER_MODE = 0;
     const static uint8_t DEFAULT_CODER_MODE = 1;
     const static uint8_t REPO_CODER_MODE = 2;
     const static uint8_t MAX_CODER_MODE = 3;
 
-    static const int SPEED_MODE_MATCHER_NO_OF_THREADS = 12;
-    static const int DEFAULT_MATCHER_NO_OF_THREADS = 8;
-    static const int PARALLELIO_MODE_THREADS_LIMIT = 3;
-    static const int SINGLEFILE_PARALLEL_MIN_TARGETS = 4;
     bool noOfThreadsLimited = false;
     int coderThreads = -1;
     int backendThreads = -1;
-    bool matcherWorkingThreadsFixed = false;
-    int matcherWorkingThreads = DEFAULT_MATCHER_NO_OF_THREADS;
 
     bool appendCommand = false;
     bool infoCommand = false;
     bool repackCommand = false;
 
     bool storeFileSeparatorMarksInHeadersStream = false;
-    bool lazyDecompressionSupport = true;
+    bool lazyDecompressionSupport = refRegionSeparators;
     bool disableLazyDecompression = false;
 
     bool appOutToCerr = false;
@@ -53,20 +45,7 @@ public:
     static const char MATCH_MARK = (char) ('%' + 128);
     static const char SEQ_SEPARATOR_MARK = (char) ('"' + 128);
     static const char FILE_SEPARATOR_MARK = (char) (';' + 128);
-    static const char RC_MATCH_MARK = (char) ('$' + 128);
-    static const char REF_REGION_SEPARATOR = 0;
-
-    static const int ADJUSTED_REFERENCE_FACTOR_FLAG = -1;
-
-    static const int DEFAULT_KMER_LENGTH = 32;
-    static const int PROTEINS_PROFILE_KMER_LENGTH = 16;
-
-    static const int DEFAULT_MODE_REF_SAMPLING = 16;
-    static const int ALT_REF_SAMPLING = 7;
-
-    static const int MIN_MATCH_LENGTH = 16;
-    static const int DEFAULT_SKIP_MARGIN = 16;
-    static const int MAX_MODE_SKIP_MARGIN = 24;
+    static const char RC_MATCH_MARK = (char) ('$' + 128);;
 
     static const int MAX_GAP_DEPTH = 128;
     static const int DEFAULT_GAP_DEPTH_OFFSET_ENCODING = 64;
@@ -81,168 +60,6 @@ public:
 
     static const int DEFAULT_RC_MATCH_MINIMUM_LENGTH = 55;
 
-    static const int DEFAULT_REFERENCE_SLIDING_WINDOW_FACTOR = 16;
-
-    static const int DEFAULT_BIG_REFERENCE_COMPRESSOR_RATIO = 16;
-    static const int MAX_BIG_REFERENCE_COMPRESSOR_RATIO = 4;
-
-    static const int DEFAULT_UNMATCHED_LENGTH_FACTOR = 128;
-    static const int DEFAULT_UNMATCHED_LENGTH_RC_FACTOR = 8;
-    static const int FAST_LAZY_DECODING_UNMATCHED_LENGTH_FACTOR = 16;
-    static const int FAST_LAZY_DECODING_UNMATCHED_LENGTH_RC_FACTOR = 2;
-    static const uint64_t DEFAULT_REF_LITERAL_BEFORE_AFTER_EXT = 32;
-    static const uint64_t DEFAULT_REF_LITERAL_MINIMAL_LENGTH_EXT = SIZE_MAX;
-
-    static const uint64_t MIN_REF_INIT_SIZE = 1 << 16;
-    static const uint64_t MIN_BASIC_BLOCK_SIZE = 1 << 21;
-    static const uint64_t AVG_REF_INIT_SIZE = 1 << 23;
-    static const uint64_t SEQ_BLOCK_SIZE = 1 << 17;
-
-    static const uint8_t FRACTION_REF_EXTENSION_STRATEGY = 0;
-    static const uint8_t NO_RC_REF_EXTENSION_STRATEGY_MASK = 2;
-
-    static const uint64_t REFERENCE_LENGTH_LIMIT = (uint64_t) UINT32_MAX << 8;
-
-    static const uint8_t DEFAULT_ALLOWED_TARGETS_OUTRUN_FACTOR = 8;
-    static const uint8_t REPO_MODE_ALLOWED_TARGETS_OUTRUN_FOR_DISSIMILAR_CONTIGS = 0;
-    static const uint8_t REPO_MODE_UNMATCHED_FRACTION_TWEAK_FACTOR_FOR_DISSIMILAR_CONTIGS = 2;
-    static const uint8_t DEFAULT_ALLOWED_TARGETS_OUTRUN_FOR_DISSIMILAR_CONTIGS = 1;
-    static const uint8_t DEFAULT_UNMATCHED_FRACTION_TWEAK_FACTOR_FOR_DISSIMILAR_CONTIGS = 16;
-    static const uint8_t SPEED_MODE_ALLOWED_TARGETS_OUTRUN_FOR_DISSIMILAR_CONTIGS = 4;
-    static const uint8_t SPEED_MODE_UNMATCHED_FRACTION_TWEAK_FACTOR_FOR_DISSIMILAR_CONTIGS = 32;
-    static const uint64_t DEFAULT_MINIMAL_LENGTH_FOR_DISSIMILAR_CONTIGS = 1024;
-
-    uint8_t refExtensionStrategy = FRACTION_REF_EXTENSION_STRATEGY;
-    uint64_t refLiteralBeforeAfterExt = DEFAULT_REF_LITERAL_BEFORE_AFTER_EXT;
-    uint64_t refLiteralMinimalLengthExt = DEFAULT_REF_LITERAL_MINIMAL_LENGTH_EXT;
-
-    int dynamicUnmatchedFractionFactorLimit = DEFAULT_UNMATCHED_LENGTH_FACTOR;
-    int currentUnmatchedFractionFactor = DEFAULT_UNMATCHED_LENGTH_FACTOR;
-    bool unmatchedFractionFactorFixed = false;
-    int unmatchedFractionRCFactor = DEFAULT_UNMATCHED_LENGTH_RC_FACTOR;
-    bool unmatchedFractionRCFactorFixed = false;
-    bool contigsIndivduallyReversed = true;
-
-    uint8_t allowedTargetsOutrunFactor = DEFAULT_ALLOWED_TARGETS_OUTRUN_FACTOR;
-    uint8_t allowedTargetsOutrunForDissimilarContigs = DEFAULT_ALLOWED_TARGETS_OUTRUN_FOR_DISSIMILAR_CONTIGS;
-    uint64_t minimalLengthForDissimilarContigs = DEFAULT_MINIMAL_LENGTH_FOR_DISSIMILAR_CONTIGS;
-    uint8_t unmatchedFractionFactorTweakForDissimilarContigs = DEFAULT_UNMATCHED_FRACTION_TWEAK_FACTOR_FOR_DISSIMILAR_CONTIGS;
-
-    inline bool isRCinReferenceDisabled() const {
-        return refExtensionStrategy & NO_RC_REF_EXTENSION_STRATEGY_MASK;
-    }
-
-    const static int MIN_PROBE_LEN = 2 << 7;
-    const static int MAX_PROBE_LEN = 2 << 15;
-    const static int MAX_NON_STANDARD_SYMBOLS_IN_PERCENT = 10;
-
-    int probe_remaining = MAX_PROBE_LEN;
-    int probe_non_std_count = 0;
-
-    void probeProteinsProfile(char* seq, uint64_t len)
-    {
-        if (probe_remaining == 0)
-            return;
-        len = len > probe_remaining ? probe_remaining : len;
-        probe_remaining -= len;
-
-        for (int i = 0; i < len; i++)
-        {
-            switch (seq[i])
-            {
-                case 'a':
-                case 'c':
-                case 'g':
-                case 't':
-                case 'u':
-                case 'A':
-                case 'C':
-                case 'G':
-                case 'T':
-                case 'U':
-                case 'N': break;
-                default: probe_non_std_count++;
-            }
-        }
-        int probe_len = MAX_PROBE_LEN - probe_remaining;
-        int non_std_symbols_in_percents = probe_non_std_count * 100 / (int) len;
-        if (probe_len >= MIN_PROBE_LEN && k != PROTEINS_PROFILE_KMER_LENGTH
-                && non_std_symbols_in_percents > MAX_NON_STANDARD_SYMBOLS_IN_PERCENT)
-        {
-            probe_remaining = 0;
-            fprintf(stderr,  "Switching to protein profile.\n");
-            setProteinsCompressionProfile();
-        }
-    }
-
-#ifdef DEVELOPER_BUILD
-    static const uint8_t COMBINED_REF_EXTENSION_STRATEGY_MASK = 1;
-    static const uint8_t ONLY_LITERAL_REF_EXTENSION_STRATEGY_MASK = 4;
-    static const int INITIAL_REF_EXT_GOAL_FACTOR = 8;
-    static const int FINAL_REF_EXT_END_MARGIN_FILES = 16;
-    static const int MINIMAL_UNMATCHED_LENGTH_FACTOR = 128;
-    static const int RELAX_FRACTION_FACTOR_FACTOR = 4;
-    static const int TIGHTEN_FRACTION_FACTOR_REDUCTION = 4;
-    static const uint8_t BLOCK_REF_EXTENSION_STRATEGY_MASK = 8;
-    static const uint8_t DYNAMIC_REF_EXT_FACTOR_MASK = 16;
-
-    inline bool usesCombinedRefExtensionStrategy() const {
-        return refExtensionStrategy & COMBINED_REF_EXTENSION_STRATEGY_MASK;
-    }
-
-    inline bool useOnlyLiteralsinReference() const {
-        return refExtensionStrategy & ONLY_LITERAL_REF_EXTENSION_STRATEGY_MASK;
-    }
-
-    inline bool splitContigsIntoBlocks() const {
-        return refExtensionStrategy & BLOCK_REF_EXTENSION_STRATEGY_MASK;
-    }
-
-    inline bool dynamicRefExtStrategy() const {
-        return refExtensionStrategy & DYNAMIC_REF_EXT_FACTOR_MASK;
-    }
-
-    void relaxUnmatchedFractionFactor() {
-        int tmp = currentUnmatchedFractionFactor;
-        if (dynamicRefExtStrategy())
-            tmp *= RELAX_FRACTION_FACTOR_FACTOR;
-        if (tmp > dynamicUnmatchedFractionFactorLimit)
-            tmp = dynamicUnmatchedFractionFactorLimit;
-        currentUnmatchedFractionFactor = tmp;
-    }
-
-    void tightenUnmatchedFractionFactor() {
-        int tmp = currentUnmatchedFractionFactor;
-        if (dynamicRefExtStrategy())
-            tmp -= TIGHTEN_FRACTION_FACTOR_REDUCTION;
-        if (tmp < 1)
-            tmp = 1;
-        currentUnmatchedFractionFactor = tmp;
-    }
-#endif
-
-    inline bool isLiteralProperForRefExtension(uint64_t litLength) {
-        return litLength > refLiteralMinimalLengthExt;
-    }
-
-    inline bool isContigProperForRefExtension(uint64_t seqLength, uint64_t unmatchedChars, int unmatchedFractionFactor) {
-        return
-#ifdef DEVELOPER_BUILD
-                !useOnlyLiteralsinReference() && (!usesCombinedRefExtensionStrategy() ||
-                                                  unmatchedChars > MINIMAL_UNMATCHED_LENGTH_FACTOR) &&
-                #endif
-                unmatchedChars * unmatchedFractionFactor > seqLength;
-    }
-
-    inline bool isContigProperForRefRCExtension(uint64_t seqLength, uint64_t unmatchedChars, int unmatchedFractionRCFactor) {
-        return unmatchedChars * unmatchedFractionRCFactor > seqLength;
-    }
-
-
-    inline bool isContigDissimilar(uint64_t seqLength, int64_t unmatchedChars, int unmatchedFractionFactor) {
-        return seqLength > minimalLengthForDissimilarContigs &&
-               unmatchedChars * (unmatchedFractionFactor / unmatchedFractionFactorTweakForDissimilarContigs) > seqLength;
-    }
 
     // HEADERS TEMPLATES PARAMS
 
@@ -250,20 +67,9 @@ public:
     static const int MAX_PATTERN_SHIFT = 3;
 
     // INPUT PARAMETERS
-    int k = DEFAULT_KMER_LENGTH;
+
     bool kmerLengthFixed = false;
-    int k1 = DEFAULT_MODE_REF_SAMPLING;
-    bool referenceSamplingStepFixed = false;
-    int k2 = 1;
-    uint8_t skipMargin = DEFAULT_SKIP_MARGIN;
-    bool skipMarginFixed = false;
-    int referenceFactor = ADJUSTED_REFERENCE_FACTOR_FLAG;
-    int referenceSlidingWindowFactor = DEFAULT_REFERENCE_SLIDING_WINDOW_FACTOR;
-    bool referenceSlidingWindowFactorOption = false;
-    bool enable40bitReference = true;
-    bool circularReference = true;
-    uint8_t bigReferenceCompressorRatio = DEFAULT_BIG_REFERENCE_COMPRESSOR_RATIO;
-    bool separateRCBuffer = false;
+
     bool frugal64bitLenEncoding = true;
 
     uint8_t coderMode = DEFAULT_CODER_MODE;
@@ -294,12 +100,9 @@ public:
     bool rcMatchMinLengthFixed = false;
     bool rcRedundancyRemoval = rcMatchMinLength != 0;
 
-    bool allowLossyCompression = false;
-    bool enableDNALineLengthEncoding = true;
-
     int64_t dnaLineLength = -1;
     bool enableCustomDNAformatting = false;
-    bool uppercaseDNA = false;
+
     bool ignoreFastaFilesPath = false;
     static const int RECOMMENDED_GZ_COMPRESSION_LEVEL = 2;
     int decompressionToGzCoderLevel = 0;
@@ -313,10 +116,6 @@ public:
     string masterFilterPattern;
     bool forceOverwrite = false;
 
-    bool sequentialMatching = false;
-    bool g0IsTarget = false;
-    bool interleaveFileOrder = false;
-    bool bruteParallel = false;
 #ifdef DEVELOPER_BUILD
     bool validationMode = false;
     static const int VALIDATION_LOG_LIMIT = 100;
@@ -501,12 +300,12 @@ public:
     }
 
     bool isStdinMode(bool decoding) {
-        return (decoding && inArchiveFileName == MBGC_Params::STANDARD_IO_POSIX_ALIAS);
+        return (decoding && inArchiveFileName == MGMP_Params::STANDARD_IO_POSIX_ALIAS);
     }
 
     bool isStdoutMode(bool decoding) {
-        return  (decoding && outputPath == MBGC_Params::STANDARD_IO_POSIX_ALIAS) ||
-                (!decoding && outArchiveFileName == MBGC_Params::STANDARD_IO_POSIX_ALIAS);
+        return  (decoding && outputPath == MGMP_Params::STANDARD_IO_POSIX_ALIAS) ||
+                (!decoding && outArchiveFileName == MGMP_Params::STANDARD_IO_POSIX_ALIAS);
     }
 
     void printout() {
@@ -620,9 +419,9 @@ public:
 #ifdef DEVELOPER_BUILD
         if (usesCombinedRefExtensionStrategy())
             PgHelpers::writeValue(out, useOnlyLiteralsinReference() ?
-                                       dynamicUnmatchedFractionFactorLimit : MBGC_Params::MINIMAL_UNMATCHED_LENGTH_FACTOR);
+                                       dynamicUnmatchedFractionFactorLimit : MGMP_Params::MINIMAL_UNMATCHED_LENGTH_FACTOR);
         if (splitContigsIntoBlocks())
-            PgHelpers::writeValue(out, MBGC_Params::SEQ_BLOCK_SIZE);
+            PgHelpers::writeValue(out, MGMP_Params::SEQ_BLOCK_SIZE);
 #endif
         PgHelpers::writeValue(out, bigReferenceCompressorRatio);
         PgHelpers::writeValue(out, allowedTargetsOutrunForDissimilarContigs);
@@ -681,7 +480,7 @@ public:
         PgHelpers::readValue<int>(in, referenceFactor);
         refExtensionStrategy = in.get();
 #ifdef DEVELOPER_BUILD
-        if (refExtensionStrategy & !MBGC_Params::NO_RC_REF_EXTENSION_STRATEGY_MASK) {
+        if (refExtensionStrategy & !MGMP_Params::NO_RC_REF_EXTENSION_STRATEGY_MASK) {
 #else
             if (refExtensionStrategy) {
 #endif
@@ -717,9 +516,9 @@ public:
         int tmp;
         if (usesCombinedRefExtensionStrategy()) {
             PgHelpers::readValue<int>(in, tmp);
-            if (tmp != MBGC_Params::MINIMAL_UNMATCHED_LENGTH_FACTOR) {
+            if (tmp != MGMP_Params::MINIMAL_UNMATCHED_LENGTH_FACTOR) {
                 fprintf(stderr, "Invalid minimal unmatched length factor: %d (expected %d).\n", tmp,
-                        MBGC_Params::MINIMAL_UNMATCHED_LENGTH_FACTOR);
+                        MGMP_Params::MINIMAL_UNMATCHED_LENGTH_FACTOR);
                 exit(EXIT_FAILURE);
             }
         }
@@ -751,6 +550,7 @@ public:
             lazyDecompressionSupport = false;
             PgHelpers::revertToMBGC121();
         }
+        refRegionSeparators = lazyDecompressionSupport;
     }
 
     void disableGapMismatches() {
@@ -783,7 +583,7 @@ public:
                     KMER_LENGTH_OPT, MIN_MATCH_LENGTH);
             exit(EXIT_FAILURE);
         }
-        MBGC_Params::k = k;
+        MGMP_Params::k = k;
         kmerLengthFixed = true;
     }
 
@@ -793,7 +593,7 @@ public:
                     REF_SAMPLING_STEP_OPT);
             exit(EXIT_FAILURE);
         }
-        MBGC_Params::k1 = k1;
+        MGMP_Params::k1 = k1;
         referenceSamplingStepFixed = true;
     }
 
@@ -803,7 +603,7 @@ public:
                     SKIP_MARGIN_OPT);
             exit(EXIT_FAILURE);
         }
-        MBGC_Params::skipMargin = skipMargin;
+        MGMP_Params::skipMargin = skipMargin;
         skipMarginFixed = true;
     }
 
@@ -813,8 +613,8 @@ public:
                     REF_FACTOR_BIN_ORDER_OPT);
             exit(EXIT_FAILURE);
         }
-        MBGC_Params::referenceFactor = ((uint64_t) 1) << o;
-        MBGC_Params::bigReferenceCompressorRatio = 1;
+        MGMP_Params::referenceFactor = ((uint64_t) 1) << o;
+        MGMP_Params::bigReferenceCompressorRatio = 1;
     }
 
     void setUnmatchedFractionFactor(int u) {
@@ -831,9 +631,9 @@ public:
                     UNMATCHED_FRACTION_FACTOR_OPT);
             exit(EXIT_FAILURE);
         }
-        MBGC_Params::dynamicUnmatchedFractionFactorLimit = u;
-        MBGC_Params::currentUnmatchedFractionFactor = u;
-        MBGC_Params::unmatchedFractionFactorFixed = true;
+        MGMP_Params::dynamicUnmatchedFractionFactorLimit = u;
+        MGMP_Params::currentUnmatchedFractionFactor = u;
+        MGMP_Params::unmatchedFractionFactorFixed = true;
     }
 
     void setUnmatchedFractionRCFactor(int r) {
@@ -842,10 +642,10 @@ public:
                     UNMATCHED_FRACTION_RC_FACTOR_OPT);
             exit(EXIT_FAILURE);
         }
-        MBGC_Params::unmatchedFractionRCFactor = r;
-        MBGC_Params::unmatchedFractionRCFactorFixed = true;
+        MGMP_Params::unmatchedFractionRCFactor = r;
+        MGMP_Params::unmatchedFractionRCFactorFixed = true;
         if (r == 0)
-            refExtensionStrategy |= MBGC_Params::NO_RC_REF_EXTENSION_STRATEGY_MASK;
+            refExtensionStrategy |= MGMP_Params::NO_RC_REF_EXTENSION_STRATEGY_MASK;
     }
 
     void setGapDepthOffsetEncoding(int g_depth) {
@@ -956,7 +756,7 @@ public:
                     REF_SLIDING_WINDOW_FACTOR_OPT, CIRCULAR_REFERENCE_BUFFER_OPT);
             exit(EXIT_FAILURE);
         }
-        MBGC_Params::referenceSlidingWindowFactor = w;
+        MGMP_Params::referenceSlidingWindowFactor = w;
         referenceSlidingWindowFactorOption = true;
     }
 
@@ -1018,10 +818,6 @@ public:
         enableCustomDNAformatting = true;
     }
 
-    void setSequentialMatchingMode() {
-        sequentialMatching = true;
-    }
-
     void setAppOutToCerr() {
         appOutToCerr = true;
     }
@@ -1043,7 +839,7 @@ public:
             fprintf(stderr, "%c - threads number - should be a positive integer.\n\n", NO_OF_THREADS_OPT);
             exit(EXIT_FAILURE);
         }
-        if (matcherWorkingThreadsFixed && t < MBGC_Params::matcherWorkingThreads) {
+        if (matcherWorkingThreadsFixed && t < MGMP_Params::matcherWorkingThreads) {
             fprintf(stderr, "%c - threads number (%d) - cannot smaller than number of worker threads (%c = %d).\n\n",
                     NO_OF_THREADS_OPT, t, MATCHER_NO_OF_THREADS_OPT, matcherWorkingThreads);
             exit(EXIT_FAILURE);
@@ -1051,8 +847,8 @@ public:
         noOfThreadsLimited = true;
         MBGC_Params::coderThreads = t;
         MBGC_Params::backendThreads = t;
-        if (MBGC_Params::matcherWorkingThreads > t)
-            MBGC_Params::matcherWorkingThreads = t;
+        if (MGMP_Params::matcherWorkingThreads > t)
+            MGMP_Params::matcherWorkingThreads = t;
     }
 
     void setMatcherThreads(int T) {
@@ -1065,8 +861,8 @@ public:
                     NO_OF_THREADS_OPT, coderThreads, MATCHER_NO_OF_THREADS_OPT, T);
             exit(EXIT_FAILURE);
         }
-        MBGC_Params::matcherWorkingThreads = T;
-        MBGC_Params::matcherWorkingThreadsFixed = true;
+        MGMP_Params::matcherWorkingThreads = T;
+        MGMP_Params::matcherWorkingThreadsFixed = true;
     }
 
     void enableOmpThreads(int t) {
@@ -1102,9 +898,9 @@ public:
             unmatchedFractionFactorTweakForDissimilarContigs = REPO_MODE_UNMATCHED_FRACTION_TWEAK_FACTOR_FOR_DISSIMILAR_CONTIGS;
         }
         if (coderMode == REPO_CODER_MODE || coderMode == MAX_CODER_MODE) {
-            MBGC_Params::bigReferenceCompressorRatio = MAX_BIG_REFERENCE_COMPRESSOR_RATIO;
+            MGMP_Params::bigReferenceCompressorRatio = MAX_BIG_REFERENCE_COMPRESSOR_RATIO;
             if (!skipMarginFixed)
-                MBGC_Params::skipMargin = MAX_MODE_SKIP_MARGIN;
+                MGMP_Params::skipMargin = MAX_MODE_SKIP_MARGIN;
             if (!unmatchedFractionRCFactorFixed) {
                 MBGC_Params::setUnmatchedFractionRCFactor(DEFAULT_UNMATCHED_LENGTH_FACTOR);
                 unmatchedFractionRCFactorFixed = false;
@@ -1120,6 +916,7 @@ public:
     }
 
     void setProteinsCompressionProfile() {
+        fprintf(stderr,  "Switching to protein profile.\n");
         if (!kmerLengthFixed)
         {
             setKmerLength(PROTEINS_PROFILE_KMER_LENGTH);

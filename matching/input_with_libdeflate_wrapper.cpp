@@ -1,16 +1,16 @@
 #include "input_with_libdeflate_wrapper.h"
-#include "../mbgccoder/MBGC_Params.h"
+#include "MGMP_Params.h"
 
-MBGC_Decoder_API* iterableDecoder = nullptr;
+MGMP_Decoder_API* iterableDecoder = nullptr;
 
-mbgcInFile mbgcInOpen(const char *filename) {
-    mbgcInFile gzf;
+mgmpInFile mgmpInOpen(const char *filename) {
+    mgmpInFile gzf;
     uint8_t* in;
     size_t size;
 
     if (iterableDecoder != nullptr) {
         iterableDecoder->iterateNext(filename, in, size);
-    } else if (strcmp(filename, MBGC_Params::STANDARD_IO_POSIX_ALIAS) == 0) {
+    } else if (strcmp(filename, MGMP_Params::STANDARD_IO_POSIX_ALIAS) == 0) {
         int c;
         size_t capacity = 4096, i = 0;
         void *newPtr = NULL;
@@ -120,7 +120,7 @@ mbgcInFile mbgcInOpen(const char *filename) {
     return gzf;
 }
 
-size_t mbgcInRead(mbgcInFile &gzf, void *buf, size_t nbyte) {
+size_t mgmpInRead(mgmpInFile &gzf, void *buf, size_t nbyte) {
     if (gzf.size - gzf.pos < nbyte)
         nbyte = gzf.size - gzf.pos;
     memcpy(buf, gzf.out + gzf.pos, nbyte);
@@ -128,18 +128,18 @@ size_t mbgcInRead(mbgcInFile &gzf, void *buf, size_t nbyte) {
     return nbyte;
 }
 
-mbgcInFile& mbgcInReset(mbgcInFile &gzf) {
+mgmpInFile& mgmpInReset(mgmpInFile &gzf) {
     gzf.pos = 0;
     return gzf;
 };
 
 
-int mbgcInClose(mbgcInFile &gzf) {
+int mgmpInClose(mgmpInFile &gzf) {
     free(gzf.fileOut);
     return 0;
 }
 
-mbgcInFile &mbgcInSplit_init(mbgcInFile &gzf) {
+mgmpInFile &mgmpInSplit_init(mgmpInFile &gzf) {
     gzf.fileOut = gzf.out;
     gzf.fileSize = gzf.size;
     gzf.size = 0;
@@ -147,8 +147,8 @@ mbgcInFile &mbgcInSplit_init(mbgcInFile &gzf) {
     return gzf;
 }
 
-mbgcInFile mbgcInSplit_next(mbgcInFile &itergzf, size_t minSplitSize, char splitChar) {
-    mbgcInFile gzf = itergzf;
+mgmpInFile mgmpInSplit_next(mgmpInFile &itergzf, size_t minSplitSize, char splitChar) {
+    mgmpInFile gzf = itergzf;
     gzf.out += gzf.size;
     gzf.pos = 0;
     size_t pos = gzf.out - gzf.fileOut;

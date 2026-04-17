@@ -1,16 +1,16 @@
-#ifndef MBGC_MBGC_API_H
-#define MBGC_MBGC_API_H
+#ifndef MGMP_MBGC_API_H
+#define MGMP_MBGC_API_H
 
 #include <iostream>
 #include <stdint.h>
 
 using namespace std;
 
-class MBGC_Decoder_API {
+class MGMP_Decoder_API {
 
 public:
-    MBGC_Decoder_API() = default;
-    virtual ~MBGC_Decoder_API() = default;
+    MGMP_Decoder_API() = default;
+    virtual ~MGMP_Decoder_API() = default;
 
     virtual void decode() = 0;
 
@@ -18,4 +18,4 @@ public:
 };
 
 
-#endif //MBGC_MBGC_API_H
+#endif //MGMP_MBGC_API_H

@@ -1,7 +1,7 @@
 #ifndef MBGC_MBGC_DECODER_H
 #define MBGC_MBGC_DECODER_H
 
-#include "MBGC_API.h"
+#include "../matching/MGMP_API.h"
 
 #include "../utils/helper.h"
 #include "MBGC_Params.h"
@@ -12,7 +12,7 @@
 static const int NO_TARGET_TO_SCHEDULE = -1;
 
 template<bool lazyMode>
-class MBGC_Decoder: public MBGC_Decoder_API {
+class MBGC_Decoder: public MGMP_Decoder_API {
 private:
     static const int MASTER_THREAD_ID = 0;
     static constexpr timespec SLEEP_TIME[] {{0, 100L}};
@@ -182,7 +182,7 @@ public:
     explicit MBGC_Decoder(MBGC_Params *mbgcParams, istream* inStream);
     ~MBGC_Decoder();
 
-    static MBGC_Decoder_API* getInstance(MBGC_Params* params, string optionalWarning = "");;
+    static MGMP_Decoder_API* getInstance(MBGC_Params* params, string optionalWarning = "");;
 
     virtual void decode();
 

@@ -101,11 +101,11 @@ public:
 
     void loadSeparator(char regionSeparator);
 
-    const char* getRef() { return start1; };
-    size_t getMaxRefLength() { return maxRefLength; };
-    size_t getRefLength() { return reachedRefLengthCount ? maxRefLength : pos1; };
-    size_t getLoadingPosition() { return pos1; };
-    size_t getLoadedRefLength() { return reachedRefLengthCount * (maxRefLength - REF_SHIFT) + (pos1 - REF_SHIFT); };
+    const char* getRef() const { return start1; };
+    size_t getMaxRefLength() const { return maxRefLength; };
+    size_t getRefLength() const { return reachedRefLengthCount ? maxRefLength : pos1; };
+    size_t getLoadingPosition() const { return pos1; };
+    size_t getLoadedRefLength() const { return reachedRefLengthCount * (maxRefLength - REF_SHIFT) + (pos1 - REF_SHIFT); };
 
     void setPosition(size_t refPos, int reachedRefLengthCount) {
         this->pos1 = refPos;

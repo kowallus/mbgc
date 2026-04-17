@@ -111,6 +111,8 @@ namespace PgHelpers {
     string toMB(unsigned long long value, unsigned char decimalPlaces);
     string toString(long double value, unsigned char decimalPlaces);
 
+    string getPartShareString(size_t partLength, size_t totalLength);
+
 
     // mathematical routines
 
