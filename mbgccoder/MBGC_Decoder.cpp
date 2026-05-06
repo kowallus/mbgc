@@ -677,8 +677,8 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::loadRef(const char *seqText
 template<bool lazyMode> void MBGC_Decoder<lazyMode>::extractFilesSequentially() {
     masterThreadTargetIdx = 0;
     int tId = MASTER_THREAD_ID;
-    if (namesEndGuard >= tIdNamesPos[tId] && namesEndGuard != std::string::npos) {
-        while (masterThreadTargetIdx < targetsCount && namePos <= namesEndGuard) {
+    if ((filesCount == 1 || namesEndGuard >= tIdNamesPos[tId]) && namesEndGuard != std::string::npos) {
+        while (masterThreadTargetIdx < targetsCount && (filesCount == 1 || namePos <= namesEndGuard)) {
             if (lazyMode && (!params->masterFilterPattern.empty() || isFilterListActive)
                 && masterThreadTargetIdx < lazyDecompressionTargetsGuard) {
                 int extractTargetIdx = prepareStreamsForNextFileToDecompress(tId, masterThreadTargetIdx);
@@ -1026,7 +1026,11 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::processFilterPatterns() {
                 break;
             }
     } while (namesPos < namesEndGuard);
-    namesEndGuard = tmpGuard;
+    if (filesCount == 1) {
+        namesEndGuard = isFileSelectedFlag[0] ? namesEndGuard : std::string::npos;
+    } else {
+        namesEndGuard = tmpGuard;
+    }
 }
 
 template<bool lazyMode> bool MBGC_Decoder<lazyMode>::isTargetSelected(const string &filename, int targetIdx) {

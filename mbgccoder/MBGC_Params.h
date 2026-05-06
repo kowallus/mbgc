@@ -12,7 +12,7 @@ public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 2;
     static const char MBGC_VERSION_MINOR = 1;
-    static const char MBGC_VERSION_REVISION = 2;
+    static const char MBGC_VERSION_REVISION = 3;
 
     char mbgcVersionMajor = MBGC_VERSION_MAJOR;
     char mbgcVersionMinor = MBGC_VERSION_MINOR;
