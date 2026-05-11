@@ -1038,7 +1038,7 @@ template<bool lazyMode> bool MBGC_Decoder<lazyMode>::isTargetSelected(const stri
         return false;
     if (!isFilterListActive)
         return filename.find(params->masterFilterPattern) != string::npos;
-    if (targetIdx == FIRST_FILE_TARGET_IDX)
+    if (targetIdx == FIRST_FILE_TARGET_IDX || filesCount == 1)
         return isFileSelectedFlag[0];
     return isTargetSelectedPtr[targetIdx];
 }
