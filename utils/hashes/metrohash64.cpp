@@ -67,7 +67,8 @@ void MetroHash64::Update(const uint8_t * const buffer, const uint64_t length)
         if (fill > length)
             fill = length;
 
-        memcpy(input.b + (bytes % 32), ptr, static_cast<size_t>(fill));
+        const size_t safe_fill = static_cast<size_t>(fill) < (32 - static_cast<size_t>(bytes % 32)) ? static_cast<size_t>(fill) : (32 - static_cast<size_t>(bytes % 32));
+        memcpy(input.b + (bytes % 32), ptr, safe_fill);
         ptr   += fill;
         bytes += fill;
         
@@ -93,8 +94,10 @@ void MetroHash64::Update(const uint8_t * const buffer, const uint64_t length)
     }
     
     // store remaining bytes in input buffer
-    if (ptr < end)
-        memcpy(input.b, ptr, end - ptr);
+    if (ptr < end) {
+        const size_t n = static_cast<size_t>(end - ptr);
+        memcpy(input.b, ptr, n < 32 ? n : 31);
+    }
 }
 
 
