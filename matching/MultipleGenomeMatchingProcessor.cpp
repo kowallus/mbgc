@@ -566,9 +566,13 @@ void MultipleGenomeMatchingProcessor::processTargetsBruteParallel() {
 
 
 void MultipleGenomeMatchingProcessor::performMatching() {
-    if (params->sequentialMatching)
+    if (params->sequentialMatching) {
+        if (params->matcherWorkingThreadsFixed && params->matcherWorkingThreads > 1) {
+            fprintf(stderr, "WARNING: sequential mode is enabled - only single worker thread is used (although %d workers are set).\n",
+                params->matcherWorkingThreads);
+        }
         processTargetsWithParallelIO();
-    else if (params->bruteParallel)
+    } else if (params->bruteParallel)
         processTargetsBruteParallel();
     else if (targetsCount)
         processTargetsParallel();

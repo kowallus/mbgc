@@ -12,7 +12,7 @@ public:
     static const char MBGC_VERSION_MODE = '#';
     static const char MBGC_VERSION_MAJOR = 2;
     static const char MBGC_VERSION_MINOR = 1;
-    static const char MBGC_VERSION_REVISION = 4;
+    static const char MBGC_VERSION_REVISION = 5;
 
     char mbgcVersionMajor = MBGC_VERSION_MAJOR;
     char mbgcVersionMinor = MBGC_VERSION_MINOR;
@@ -180,9 +180,10 @@ public:
 
 private:
     constexpr static const char *const COMMON_OPTS = "t:Ivh2";
+    constexpr static const char *const COMMON_CODING_OPTS = "fQ";
     constexpr static const char *const COMMON_DEV_BUILD_OPTS = "PO:";
 
-    constexpr static const char *const COMPRESS_OPTS = "m:Qk:u:r:s:o:Cg:b:x:XR:fL";
+    constexpr static const char *const COMPRESS_OPTS = "m:k:u:r:s:o:Cg:b:x:XR:L";
     constexpr static const char *const COMPRESS_DEV_BUILD_OPTS = "BSM:Dw:G:y:Y:14F:N:8WA:j:J:Vp";
 
     constexpr static const char *const COMPRESS_APPEND_COMMON_OPTS = "i:";
@@ -190,9 +191,9 @@ private:
 
     constexpr static const char *const COMMON_FILTERING_OPTS = "e:E:";
 
-    constexpr static const char *const DECOMPRESS_OPTS = "z:f";
+    constexpr static const char *const DECOMPRESS_OPTS = "z:";
     constexpr static const char *const DECOMPRESS_DEV_BUILD_OPTS = "c";
-    constexpr static const char *const DECODING_COMMON_OPTS = "l:Z";
+    constexpr static const char *const DECODING_COMMON_OPTS = "l:";
 
     constexpr static const char *const INFO_OPTS = "H";
 
@@ -202,7 +203,7 @@ private:
 
 public:
 #ifdef DEVELOPER_BUILD
-    inline static const string COMMON_SHORT_OPTS = string(COMMON_OPTS) + string(COMMON_DEV_BUILD_OPTS);
+    inline static const string COMMON_SHORT_OPTS = string(COMMON_OPTS) + string(COMMON_CODING_OPTS) + string(COMMON_DEV_BUILD_OPTS);
 
     inline static const string COMPRESS_SHORT_OPTS = string(COMPRESS_APPEND_COMMON_OPTS) + string(COMPRESS_OPTS)
                                                      + string(COMPRESS_DEV_BUILD_OPTS) + string(ENCODING_OPTS) + COMMON_SHORT_OPTS;
@@ -211,16 +212,18 @@ public:
                                                        + string(DECOMPRESS_DEV_BUILD_OPTS) + string(COMMON_FILTERING_OPTS) + COMMON_SHORT_OPTS;
     inline static const string VALIDATION_SHORT_OPTS = string(VALIDATION_DEV_BUILD_OPTS) + string(DECODING_COMMON_OPTS)
                                                        + string(COMMON_FILTERING_OPTS) + COMMON_SHORT_OPTS;
+    inline static const string INFO_SHORT_OPTS = string(INFO_OPTS) + string(COMMON_FILTERING_OPTS)
+                                                 + string(COMMON_OPTS) + string(COMMON_DEV_BUILD_OPTS);
 #else
-    inline static const string COMMON_SHORT_OPTS = string(COMMON_OPTS);
+    inline static const string COMMON_SHORT_OPTS = string(COMMON_OPTS) + string(COMMON_CODING_OPTS);
 
     inline static const string COMPRESS_SHORT_OPTS = string(COMPRESS_APPEND_COMMON_OPTS) + string(MBGC_Params::COMPRESS_OPTS)
                                                     + string(ENCODING_OPTS) + MBGC_Params::COMMON_SHORT_OPTS;
     inline static const string DECOMPRESS_SHORT_OPTS = string(DECOMPRESS_OPTS) + string(DECODING_COMMON_OPTS)
                                             + string(COMMON_FILTERING_OPTS) + COMMON_SHORT_OPTS;
-#endif
     inline static const string INFO_SHORT_OPTS = string(INFO_OPTS) + string(COMMON_FILTERING_OPTS)
-                                                 + COMMON_SHORT_OPTS;
+                                                 + string(COMMON_OPTS);
+#endif
     inline static const string APPEND_SHORT_OPTS = string(COMPRESS_APPEND_COMMON_OPTS)
                                                    + string(ENCODING_OPTS) + COMMON_SHORT_OPTS;
     inline static const string REPACK_SHORT_OPTS = string(REPACK_OPTS) + string(DECODING_COMMON_OPTS)
@@ -232,25 +235,26 @@ public:
     static const char HELP_OPT = COMMON_OPTS[4];
     static const char APP_OUT_TO_CERR_OPT = COMMON_OPTS[5];
 
+    static const char FORCE_OVERWRITE_OPT = COMMON_CODING_OPTS[0];
+    static const char SEQ_CODING_MODE_OPT = COMMON_CODING_OPTS[1];
+
     static const char PRINTOUT_PARAMS_OPT = COMMON_DEV_BUILD_OPTS[0];
     static const char PARAMS_TO_LOGFILE_OPT = COMMON_DEV_BUILD_OPTS[1];
 
     static const char INPUT_FILE_OPT = COMPRESS_APPEND_COMMON_OPTS[0];
     static const char COMPRESSION_MODE_OPT = COMPRESS_OPTS[0];
-    static const char SEQ_MATCHING_MODE_OPT = COMPRESS_OPTS[2];
-    static const char KMER_LENGTH_OPT = COMPRESS_OPTS[3];
-    static const char UNMATCHED_FRACTION_FACTOR_OPT = COMPRESS_OPTS[5];
-    static const char UNMATCHED_FRACTION_RC_FACTOR_OPT = COMPRESS_OPTS[7];
-    static const char REF_SAMPLING_STEP_OPT = COMPRESS_OPTS[9];
-    static const char REF_FACTOR_BIN_ORDER_OPT = COMPRESS_OPTS[11];
-    static const char CIRCULAR_REFERENCE_BUFFER_OPT = COMPRESS_OPTS[13];
-    static const char GAP_DEPTH_OFFSET_ENCODING_OPT = COMPRESS_OPTS[14];
-    static const char GAP_BREAKING_MATCH_MINIMAL_LENGTH_OPT = COMPRESS_OPTS[16];
-    static const char MAX_CONSECUTIVE_MISMATCHES_OPT = COMPRESS_OPTS[18];
-    static const char DISABLE_MISMATCHES_WITH_EXCLUSION_OPT = COMPRESS_OPTS[20];
-    static const char RC_MATCH_MINIMAL_LENGTH_OPT = COMPRESS_OPTS[21];
-    static const char FORCE_OVERWRITE_OPT = COMPRESS_OPTS[23];
-    static const char ALLOW_LOSSY_COMPRESSION_OPT = COMPRESS_OPTS[24];
+    static const char KMER_LENGTH_OPT = COMPRESS_OPTS[2];
+    static const char UNMATCHED_FRACTION_FACTOR_OPT = COMPRESS_OPTS[4];
+    static const char UNMATCHED_FRACTION_RC_FACTOR_OPT = COMPRESS_OPTS[6];
+    static const char REF_SAMPLING_STEP_OPT = COMPRESS_OPTS[8];
+    static const char REF_FACTOR_BIN_ORDER_OPT = COMPRESS_OPTS[10];
+    static const char CIRCULAR_REFERENCE_BUFFER_OPT = COMPRESS_OPTS[12];
+    static const char GAP_DEPTH_OFFSET_ENCODING_OPT = COMPRESS_OPTS[13];
+    static const char GAP_BREAKING_MATCH_MINIMAL_LENGTH_OPT = COMPRESS_OPTS[15];
+    static const char MAX_CONSECUTIVE_MISMATCHES_OPT = COMPRESS_OPTS[17];
+    static const char DISABLE_MISMATCHES_WITH_EXCLUSION_OPT = COMPRESS_OPTS[19];
+    static const char RC_MATCH_MINIMAL_LENGTH_OPT = COMPRESS_OPTS[20];
+    static const char ALLOW_LOSSY_COMPRESSION_OPT = COMPRESS_OPTS[22];
 
     static const char MATCHER_NO_OF_THREADS_OPT = ENCODING_OPTS[0];
     static const char UPPERCASE_DNA_OPT = ENCODING_OPTS[2];
@@ -281,7 +285,6 @@ public:
     static const char PATTERNS_FILE_OPT = COMMON_FILTERING_OPTS[2];
     static const char GZ_DECOMPRESSION_OPT = DECOMPRESS_OPTS[0];
     static const char DNA_LINE_LENGTH_OPT = DECODING_COMMON_OPTS[0];
-    static const char DISABLE_LAZY_DECODING_OPT = DECODING_COMMON_OPTS[2]; // DEV_BUILD
 
     static const char CONCAT_HEADERS_AND_SEQS_OPT = DECOMPRESS_DEV_BUILD_OPTS[0];
     static const char DUMP_STREAMS_OPT = VALIDATION_DEV_BUILD_OPTS[0];
@@ -320,7 +323,7 @@ public:
                 k, k1, skipMargin, skipMarginFixed, referenceFactor, enable40bitReference, referenceSlidingWindowFactor, k2, bigReferenceCompressorRatio, separateRCBuffer);
         fprintf(stderr, "\n  * matching management (+ dev_build reference extension strategies)");
         fprintf(stderr, "\n%c\t%c\t%c\t%c\t%c\t%c\t%c\t%s\t%c\t%c\t%c_limit\n%d\t%d\t%d\t%d\t%d\t%ld\t%d\t%d\t%ld\t%ld\t%d",
-                UNMATCHED_FRACTION_FACTOR_OPT, UNMATCHED_FRACTION_RC_FACTOR_OPT, SEQ_MATCHING_MODE_OPT, BRUTE_PARALLEL_MODE_OPT, ALLOWED_TARGETS_OUTRUN_FOR_DISSIMILAR_CONTIGS_OPT, MINIMAL_LENGTH_FOR_DISSIMILAR_CONTIGS_TWEAK_OPT, UNMATCHED_FRACTION_TWEAK_FACTOR_FOR_DISSIMILAR_CONTIGS_OPT, "ReExSt", REF_LITERAL_MINIMAL_LENGTH_OPT, REF_LITERAL_BEFORE_AFTER_EXT_OPT, DYNAMIC_REF_EXTENSION_FACTOR_OPT,
+                UNMATCHED_FRACTION_FACTOR_OPT, UNMATCHED_FRACTION_RC_FACTOR_OPT, SEQ_CODING_MODE_OPT, BRUTE_PARALLEL_MODE_OPT, ALLOWED_TARGETS_OUTRUN_FOR_DISSIMILAR_CONTIGS_OPT, MINIMAL_LENGTH_FOR_DISSIMILAR_CONTIGS_TWEAK_OPT, UNMATCHED_FRACTION_TWEAK_FACTOR_FOR_DISSIMILAR_CONTIGS_OPT, "ReExSt", REF_LITERAL_MINIMAL_LENGTH_OPT, REF_LITERAL_BEFORE_AFTER_EXT_OPT, DYNAMIC_REF_EXTENSION_FACTOR_OPT,
                 currentUnmatchedFractionFactor, unmatchedFractionRCFactor, sequentialMatching, bruteParallel, allowedTargetsOutrunForDissimilarContigs, minimalLengthForDissimilarContigs, unmatchedFractionFactorTweakForDissimilarContigs, refExtensionStrategy, refLiteralMinimalLengthExt, refLiteralBeforeAfterExt, dynamicUnmatchedFractionFactorLimit);
         fprintf(stderr, "\n  * extending matches, mismatches & gaps encoding");
         fprintf(stderr, "\n!%c\t%c\t%c\t%c\t%c\t%c\t%c\n%d\t%d\t%d\t%d\t%d\t%d\t%ld",
@@ -346,7 +349,7 @@ public:
         *PgHelpers::logout << KMER_LENGTH_OPT << "\t" << REF_SAMPLING_STEP_OPT << "\t" << SKIP_MARGIN_OPT << "\t" <<
                            SKIP_MARGIN_OPT << "_fixed\t2^" << REF_FACTOR_BIN_ORDER_OPT << "\t!" << LIMIT_32_BIT_REF_OPT << "\t" << CIRCULAR_REFERENCE_BUFFER_OPT << "\t" <<
                            REF_SLIDING_WINDOW_FACTOR_OPT << "\t" << "k2" << "\t" << "BRCR" << "\t" <<  "SepaRC" << "\t";
-        *PgHelpers::logout << UNMATCHED_FRACTION_FACTOR_OPT << "\t" << UNMATCHED_FRACTION_RC_FACTOR_OPT << "\t" << SEQ_MATCHING_MODE_OPT << "\t" <<
+        *PgHelpers::logout << UNMATCHED_FRACTION_FACTOR_OPT << "\t" << UNMATCHED_FRACTION_RC_FACTOR_OPT << "\t" << SEQ_CODING_MODE_OPT << "\t" <<
                            BRUTE_PARALLEL_MODE_OPT << "\t" << ALLOWED_TARGETS_OUTRUN_FOR_DISSIMILAR_CONTIGS_OPT << "\t" <<
                            MINIMAL_LENGTH_FOR_DISSIMILAR_CONTIGS_TWEAK_OPT << "\t" <<
                            UNMATCHED_FRACTION_TWEAK_FACTOR_FOR_DISSIMILAR_CONTIGS_OPT << "\t" << "ReExSt" << "\t" <<
@@ -860,6 +863,9 @@ public:
             fprintf(stderr, "%c - threads number (%d) - cannot smaller than number of worker threads (%c = %d).\n\n",
                     NO_OF_THREADS_OPT, coderThreads, MATCHER_NO_OF_THREADS_OPT, T);
             exit(EXIT_FAILURE);
+        }
+        if (T == 1) {
+            MGMP_Params::setSequentialMatchingMode();
         }
         MGMP_Params::matcherWorkingThreads = T;
         MGMP_Params::matcherWorkingThreadsFixed = true;

@@ -5,7 +5,6 @@
 #define XXH_INLINE_ALL
 #define XXH_PRIVATE_API
 #include "hashes/xxhash.h"
-#include "hashes/metrohash64.h"
 #include "hashes/city.h"
 
 template <size_t K>
@@ -18,13 +17,6 @@ template <size_t K>
 inline std::uint32_t xxhash64(const char* key) {
 	XXH64_hash_t result = XXH64((const void*)key, K, 9876543210UL);
 	return (std::uint32_t)(result);
-}
-
-template <size_t K>
-inline std::uint32_t metroHash64(const char* key) {
-    unsigned long long resultMH64 = 0ULL;
-	MetroHash64::Hash((const uint8_t*)key, K, (uint8_t*)(&resultMH64), 9876543210ULL);
-	return (std::uint32_t)(resultMH64);
 }
 
 template <size_t K>

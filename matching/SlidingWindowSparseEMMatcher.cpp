@@ -51,8 +51,8 @@ const uint64_t NOT_MATCHED_POSITION = UINT64_MAX;
 
 //////////////////// GLOBAL VARS ////////////////////////////
 
-#define INIT_HASH_FUNC(n) hashFuncMatrix[n][1] = maRushPrime1HashSimplified<n>; hashFuncMatrix[n][2] = xxhash32<n>; hashFuncMatrix[n][3] = maRushPrime1HashSparsified<n>;hashFuncMatrix[n][4] = metroHash64<n>; hashFuncMatrix[n][5] = cityHash64<n>;
-string hashNames[] = { "(?)", "maRushPrime1HashSimplified", "xxhash32", "maRushPrime1HashSparsified", "metroHash64", "cityHash64"};
+#define INIT_HASH_FUNC(n) hashFuncMatrix[n][1] = maRushPrime1HashSimplified<n>; hashFuncMatrix[n][2] = xxhash32<n>; hashFuncMatrix[n][3] = maRushPrime1HashSparsified<n>; hashFuncMatrix[n][4] = cityHash64<n>;
+string hashNames[] = { "(?)", "maRushPrime1HashSimplified", "xxhash32", "maRushPrime1HashSparsified", "cityHash64"};
 void SlidingWindowSparseEMMatcher::initHashFuncMatrix() {
     INIT_HASH_FUNC(12);
     INIT_HASH_FUNC(16);

@@ -66,6 +66,7 @@ Basic options (for compression, decompression and commons):
         [-f] overwrite an existing output file
         [-e <pattern>] exclude files with names not containing pattern
         [-E <patternsFile>] exclude files not matching any pattern 
+        [-Q] disable parallel coding (does not apply to I/O and backend)
         [-t <noOfThreads>] set limit of used threads
         [-I] ignore FASTA files paths (use only filenames)
         [-2] redirect app output to stderr

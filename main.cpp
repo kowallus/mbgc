@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #endif
 
-#define RELEASE_DATE "2026-05-11"
+#define RELEASE_DATE "2026-06-01"
 
 using namespace std;
 
@@ -47,8 +47,6 @@ void printCommonDevOpts() {
 
 void printCompressDeveloperOptions(bool repackCommand) {
     fprintf(stderr, "\n------------------ DEVELOPER OPTIONS ----------------\n");
-    if (repackCommand)
-        fprintf(stderr, "[-%c] disable lazy decompression\n", MBGC_Params::DISABLE_LAZY_DECODING_OPT);
     fprintf(stderr, "[-%c] brute parallel encoding mode (without producer-consumer approach)\n",
             MBGC_Params::BRUTE_PARALLEL_MODE_OPT);
     fprintf(stderr, "[-%c] stronger backend compression (slow)\n", MBGC_Params::ULTRA_STREAMS_COMPRESSION_OPT);
@@ -137,6 +135,13 @@ void printEncodeUsage(string base_cmd_name, bool details, bool repackMode) {
                 "\t[-%c <pattern>] exclude files with names not containing pattern\n"
                 "\t[-%c <patternsFile>] exclude files not matching any pattern\n",
                 MBGC_Params::DNA_LINE_LENGTH_OPT, MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT);
+        fprintf(stderr,
+            "\t[-%c] disable parallel coding (does not apply to I/O and backend)\n",
+            MBGC_Params::SEQ_CODING_MODE_OPT);
+    } else {
+        fprintf(stderr,
+                "\t[-%c] disable parallel matching (does not apply to I/O and backend)\n",
+                MBGC_Params::SEQ_CODING_MODE_OPT);
     }
     printCommonOpts();
     if (details) {
@@ -154,10 +159,9 @@ void printEncodeAdvancedDetails() {
                     MBGC_Params::MATCHER_NO_OF_THREADS_OPT, MBGC_Params::DEFAULT_MATCHER_NO_OF_THREADS);
     fprintf(stderr, "[-%c] converts bases to uppercase\n",
             MBGC_Params::UPPERCASE_DNA_OPT);
-    fprintf(stderr, "[-%c] disable parallel matching (does not apply to I/O and backend compression)\n"
-                    "[-%c <matchingKmerLength>] (%d <= %c <= 40, default: %d)\n"
+    fprintf(stderr, "[-%c <matchingKmerLength>] (%d <= %c <= 40, default: %d)\n"
                     "[-%c <unmatchedFractionFactor>] (1 <= %c <= 255, default: %d)\n",
-            MBGC_Params::SEQ_MATCHING_MODE_OPT, MBGC_Params::KMER_LENGTH_OPT,
+            MBGC_Params::KMER_LENGTH_OPT,
             MBGC_Params::MIN_MATCH_LENGTH, MBGC_Params::KMER_LENGTH_OPT, MBGC_Params::DEFAULT_KMER_LENGTH,
             MBGC_Params::UNMATCHED_FRACTION_FACTOR_OPT, MBGC_Params::UNMATCHED_FRACTION_FACTOR_OPT, MBGC_Params::DEFAULT_UNMATCHED_LENGTH_FACTOR);
     fprintf(stderr, "[-%c <unmatchedFractionRCFactor>] (0 <= %c <= 255, default: %d,\n\t\t0 disables rc-matches in reference)\n",
@@ -208,6 +212,8 @@ int encodeCommand(std::string base_cmd_name, int argc, char *argv[]) {
                 break;
             case MBGC_Params::NO_OF_THREADS_OPT:
                 params.setThreadsLimit(atoi(optarg));
+                if (params.repackCommand)
+                    repackInputParams.setThreadsLimit(atoi(optarg));
                 break;
             case MBGC_Params::MATCHER_NO_OF_THREADS_OPT:
                 params.setMatcherThreads(atoi(optarg));
@@ -218,8 +224,10 @@ int encodeCommand(std::string base_cmd_name, int argc, char *argv[]) {
             case MBGC_Params::INPUT_FILE_OPT:
                 params.setInputFileName(string(optarg));
                 break;
-            case MBGC_Params::SEQ_MATCHING_MODE_OPT:
+            case MBGC_Params::SEQ_CODING_MODE_OPT:
                 params.setSequentialMatchingMode();
+                if (params.repackCommand)
+                    repackInputParams.disableLazyDecompression = true;
                 break;
             case MBGC_Params::KMER_LENGTH_OPT:
                 params.setKmerLength(atoi(optarg));
@@ -267,9 +275,6 @@ int encodeCommand(std::string base_cmd_name, int argc, char *argv[]) {
                 params.uppercaseDNA = true;
                 break;
 #ifdef DEVELOPER_BUILD
-            case MBGC_Params::DISABLE_LAZY_DECODING_OPT:
-                repackInputParams.disableLazyDecompression = true;
-                break;
             case MBGC_Params::BRUTE_PARALLEL_MODE_OPT:
                 params.setBruteParallelMode();
                 break;
@@ -440,7 +445,6 @@ void printValidateUsage(string base_cmd_name, bool details) {
 
 void printDecompressDeveloperOptions(bool isListCmd, bool isValidationCmd) {
     fprintf(stderr, "\n------------------ DEVELOPER OPTIONS ----------------\n");
-    fprintf(stderr, "[-%c] disable lazy decompression\n", MBGC_Params::DISABLE_LAZY_DECODING_OPT);
     if (isValidationCmd) {
         fprintf(stderr, "[-%c] dump streams to files\n", MBGC_Params::DUMP_STREAMS_OPT);
         fprintf(stderr, "[-%c] skip actual validation (measure decoding only)\n", MBGC_Params::SKIP_ACTUAL_VALIDATION_OPT);
@@ -484,13 +488,13 @@ void printDecodingUsage(string base_cmd_name, bool details, bool isListCmd) {
                     MBGC_Params::STANDARD_IO_POSIX_ALIAS);
     }
     fprintf(stderr, "\nBasic options:\n");
-    if (isListCmd)
+    if (isListCmd) {
         fprintf(stderr,
                 "\t[-%c <pattern>] exclude files with names not containing pattern\n"
                 "\t[-%c <patternsFile>] exclude files not matching any pattern\n"
                 "\t[-%c] list sequence headers (using convention: \">sequencename>filename\")\n",
                 MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT, MBGC_Params::LIST_HEADERS_OPT);
-    else
+    } else {
         fprintf(stderr,
                 "\t[-%c] overwrite an existing output files\n"
                 "\t[-%c <gzLevel>] extract FASTA files to gz archives\n\t\t(compression level: 1 <= %c <= 12, recommended: %d)\n"
@@ -500,6 +504,10 @@ void printDecodingUsage(string base_cmd_name, bool details, bool isListCmd) {
                 MBGC_Params::FORCE_OVERWRITE_OPT, MBGC_Params::GZ_DECOMPRESSION_OPT, MBGC_Params::GZ_DECOMPRESSION_OPT,
                 MBGC_Params::RECOMMENDED_GZ_COMPRESSION_LEVEL, MBGC_Params::DNA_LINE_LENGTH_OPT,
                 MBGC_Params::FILTER_PATTERN_OPT, MBGC_Params::PATTERNS_FILE_OPT);
+        fprintf(stderr,
+            "\t[-%c] disable parallel decoding (does not apply to I/O and backend)\n",
+            MBGC_Params::SEQ_CODING_MODE_OPT);
+    }
     printCommonOpts();
 }
 
@@ -554,10 +562,10 @@ int decodeCommands(std::string base_cmd_name, int argc, char *argv[]) {
             case MBGC_Params::LIST_HEADERS_OPT:
                 params.listHeadersMode = true;
                 break;
-#ifdef DEVELOPER_BUILD
-            case MBGC_Params::DISABLE_LAZY_DECODING_OPT:
+            case MBGC_Params::SEQ_CODING_MODE_OPT:
                 params.disableLazyDecompression = true;
                 break;
+#ifdef DEVELOPER_BUILD
             case MBGC_Params::UPPERCASE_DNA_OPT:
                 params.uppercaseDNA = true;
                 break;
@@ -684,6 +692,10 @@ void printAppendUsage(string base_cmd_name, bool details) {
                 MBGC_Params::STANDARD_IO_POSIX_ALIAS, MBGC_Params::STANDARD_IO_POSIX_ALIAS, MBGC_Params::STANDARD_IO_POSIX_ALIAS);
     }
     fprintf(stderr, "\nBasic options:\n");
+    fprintf(stderr, "\t[-%c] overwrite an existing output file\n", MBGC_Params::FORCE_OVERWRITE_OPT);
+    fprintf(stderr,
+            "\t[-%c] disable parallel coding (does not apply to I/O and backend)\n",
+            MBGC_Params::SEQ_CODING_MODE_OPT);
     printCommonOpts();
 }
 
@@ -705,6 +717,9 @@ int appendCommand(std::string base_cmd_name, int argc, char *argv[]) {
 
     while ((opt = getopt(argc, argv, MBGC_Params::APPEND_SHORT_OPTS.c_str())) != -1) {
         switch (opt) {
+            case MBGC_Params::FORCE_OVERWRITE_OPT:
+                params.forceOverwrite = true;
+            break;
             case MBGC_Params::NO_OF_THREADS_OPT:
                 newParams.coderThreads = atoi(optarg);
                 params.setThreadsLimit(newParams.coderThreads);
@@ -715,6 +730,10 @@ int appendCommand(std::string base_cmd_name, int argc, char *argv[]) {
                 break;
             case MBGC_Params::INPUT_FILE_OPT:
                 params.setInputFileName(string(optarg));
+                break;
+            case MBGC_Params::SEQ_CODING_MODE_OPT:
+                newParams.setSequentialMatchingMode();
+                params.disableLazyDecompression = true;
                 break;
 #ifdef DEVELOPER_BUILD
             case MBGC_Params::PRINTOUT_PARAMS_OPT:

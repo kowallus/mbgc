@@ -23,8 +23,8 @@ template<bool lazyMode> MBGC_Decoder<lazyMode>::MBGC_Decoder(MBGC_Params *mbgcPa
     }
 }
 
-template<bool lazyMode>
-MGMP_Decoder_API *MBGC_Decoder<lazyMode>::getInstance(MBGC_Params *params, string optionalWarning) {
+template<>
+MGMP_Decoder_API *MBGC_Decoder<true>::getInstance(MBGC_Params *params, string optionalWarning) {
     istream* in;
     if (params->isStdinMode(true)) {
 #ifdef __MINGW32__
@@ -1163,6 +1163,8 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::decodeInit() {
             decodeRefExtSizeStream(refExtSizeStream);
             initLazyDecompression();
         }
+    } else if (params->lazyDecompressionSupport && params->appendCommand) {
+        decodeRefExtSizeStream(refExtSizeStream);
     }
 
     for (int i = 0; i < MBGC_Params::MAX_GAP_DEPTH; i++)
@@ -1542,7 +1544,7 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::scheduleDependencyChain(int
 }
 
 template<bool lazyMode> void MBGC_Decoder<lazyMode>::scheduleParallelLazyDecompression() {
-    int streamsFileIdx = 0;
+    int streamsFileIdx = -1;
     int tId = 0;
     int firstOverwritingRefTarget = lazyDecompressionTargetsGuard;
     lazyDecompressionTargetsGuard = targetsCount;
@@ -1556,6 +1558,8 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::scheduleParallelLazyDecompr
             tId = std::distance(refExtLoadedPosArr.begin(), itr) - 1;
             findStreamsPositions(1, 1, tId);
         }
+    } else {
+        tId = prepareStreamsForNextFileToDecompress(tId, 0);
     }
     while (tId != NO_TARGET_TO_SCHEDULE && tId < lazyDecompressionTargetsGuard) {
         scheduleDependencyChain(tId);

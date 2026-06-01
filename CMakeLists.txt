@@ -175,7 +175,6 @@ set(LZMA_FILES
 
 set(HASHES_FILES
         utils/Hashes.h utils/hashes/xxhash.c utils/hashes/xxhash.h
-        utils/hashes/metrohash64.cpp utils/hashes/metrohash64.h utils/hashes/platform.h
         utils/hashes/city.cpp utils/hashes/city.h utils/hashes/citycrc.h)
 
 set(MATCHER_FILES

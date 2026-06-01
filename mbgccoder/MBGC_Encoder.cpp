@@ -869,7 +869,7 @@ void MBGC_Encoder::appendTemplate(MBGC_Decoder<lazyMode>* decoder, MBGC_Params& 
         params->setThreadsLimit(newParams.coderThreads);
     if (newParams.matcherWorkingThreads > 0)
         params->setMatcherThreads(newParams.matcherWorkingThreads);
-    if (params->g0IsTarget || params->matcherWorkingThreads == 1)
+    if (newParams.sequentialMatching || params->g0IsTarget || params->matcherWorkingThreads == 1)
         params->setSequentialMatchingMode();
     if (!params->sequentialMatching && singleFastaFileMode)
         switchToSplitIterMode();
@@ -909,7 +909,7 @@ void MBGC_Encoder::repackTemplate(MBGC_Decoder<lazyMode>* decoder) {
 
 void MBGC_Encoder::repack(MBGC_Params& inParams) {
     MGMP_Decoder_API* decoder = MBGC_Decoder<true>::getInstance(&inParams);
-    if (params->isLazyDecompressionEnabled())
+    if (inParams.isLazyDecompressionEnabled())
         repackTemplate<true>((MBGC_Decoder<true>*) decoder);
     else
         repackTemplate<false>((MBGC_Decoder<false>*) decoder);
