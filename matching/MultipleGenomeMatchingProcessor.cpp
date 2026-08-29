@@ -93,7 +93,9 @@ void MultipleGenomeMatchingProcessor::loadG0Ref(string& refName) {
             int probed_len = seq->seq.l;
             while (probed_len < MGMP_Params::MIN_PROBE_LEN && ((kseq_status = KSEQ_READ(seq)) >= 0))
             {
-                params->probeProteinsProfile(seq->seq.s, seq->seq.l);
+                if (params->probeProteinsProfile(seq->seq.s, seq->seq.l)) {
+                    this->setProteinsProfile();
+                }
                 probed_len += seq->seq.l;
             }
             validate_kseq_status(refName, seq->name.s, kseq_status);

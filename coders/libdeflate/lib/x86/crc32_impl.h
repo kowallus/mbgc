@@ -92,6 +92,7 @@ static const u8 MAYBE_UNUSED shift_tab[48] = {
 #endif
 
 #if (GCC_PREREQ(10, 1) || CLANG_PREREQ(6, 0, 10000000) || MSVC_PREREQ(1920)) && \
+	!(CLANG_PREREQ(18, 0, 18000000) && !CLANG_PREREQ(19, 0, 19000000)) && \
 	!defined(LIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ)
 /*
  * VPCLMULQDQ/AVX512 implementation using 256-bit vectors.  This is very similar
@@ -104,7 +105,7 @@ static const u8 MAYBE_UNUSED shift_tab[48] = {
  */
 #  define crc32_x86_vpclmulqdq_avx512_vl256  crc32_x86_vpclmulqdq_avx512_vl256
 #  define SUFFIX				      _vpclmulqdq_avx512_vl256
-#  define ATTRIBUTES		_target_attribute("vpclmulqdq,pclmul,avx512bw,avx512vl" NO_EVEX512)
+#  define ATTRIBUTES		_target_attribute("vpclmulqdq,pclmul,avx512bw,avx512vl")
 #  define VL			32
 #  define USE_AVX512		1
 #  include "crc32_pclmul_template.h"
@@ -117,7 +118,7 @@ static const u8 MAYBE_UNUSED shift_tab[48] = {
  */
 #  define crc32_x86_vpclmulqdq_avx512_vl512  crc32_x86_vpclmulqdq_avx512_vl512
 #  define SUFFIX				      _vpclmulqdq_avx512_vl512
-#  define ATTRIBUTES		_target_attribute("vpclmulqdq,pclmul,avx512bw,avx512vl" EVEX512)
+#  define ATTRIBUTES		_target_attribute("vpclmulqdq,pclmul,avx512bw,avx512vl")
 #  define VL			64
 #  define USE_AVX512		1
 #  include "crc32_pclmul_template.h"

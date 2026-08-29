@@ -821,27 +821,26 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::extractFilesParallel() {
             size_t tmp;
             isDecoding = true;
             masterThreadTargetIdx = 0;
-
-            if (params->decompressionToGzCoderLevel)
-                workerThreadsCount = omp_get_num_threads() - 1;
-            if (omp_get_num_threads() - 1 < workerThreadsCount)
-                workerThreadsCount = omp_get_num_threads() - 1;
-            extractedFilesCount.resize(workerThreadsCount, 0);
-            in.resize(workerThreadsCount, 0);
-            out.resize(workerThreadsCount, 0);
-            namesBuf.resize(workerThreadsCount, vector<string>(writingBufferSize));
-            contentsBuf.resize(workerThreadsCount, vector<string>(writingBufferSize));
-            for (int i = 0; i < workerThreadsCount; i++) {
-#pragma omp task
-                {
-                    if (lazyMode && i == 0)
-                        scheduleParallelLazyDecompression();
-                    workerParallelTask(i);
-                }
-            }
-            int io_thread_no = workerThreadsCount > 1 ? 1 : 0;
-            int threadId = lazyMode ? omp_get_thread_num() : 0;
             if (namesEndGuard >= tIdNamesPos[MASTER_THREAD_ID] && namesEndGuard != std::string::npos) {
+                if (params->decompressionToGzCoderLevel)
+                    workerThreadsCount = omp_get_num_threads() - 1;
+                if (omp_get_num_threads() - 1 < workerThreadsCount)
+                    workerThreadsCount = omp_get_num_threads() - 1;
+                extractedFilesCount.resize(workerThreadsCount, 0);
+                in.resize(workerThreadsCount, 0);
+                out.resize(workerThreadsCount, 0);
+                namesBuf.resize(workerThreadsCount, vector<string>(writingBufferSize));
+                contentsBuf.resize(workerThreadsCount, vector<string>(writingBufferSize));
+                for (int i = 0; i < workerThreadsCount; i++) {
+    #pragma omp task
+                    {
+                        if (lazyMode && i == 0)
+                            scheduleParallelLazyDecompression();
+                        workerParallelTask(i);
+                    }
+                }
+                int io_thread_no = workerThreadsCount > 1 ? 1 : 0;
+                int threadId = lazyMode ? omp_get_thread_num() : 0;
                 while (masterThreadTargetIdx < targetsCount) {
                     int ii = workerThreadsCount;
                     while (in[io_thread_no] == out[io_thread_no] + writingBufferSize) {
@@ -1544,7 +1543,7 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::scheduleDependencyChain(int
 }
 
 template<bool lazyMode> void MBGC_Decoder<lazyMode>::scheduleParallelLazyDecompression() {
-    int streamsFileIdx = -1;
+    int streamsFileIdx = 0;
     int tId = 0;
     int firstOverwritingRefTarget = lazyDecompressionTargetsGuard;
     lazyDecompressionTargetsGuard = targetsCount;
@@ -1558,8 +1557,6 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::scheduleParallelLazyDecompr
             tId = std::distance(refExtLoadedPosArr.begin(), itr) - 1;
             findStreamsPositions(1, 1, tId);
         }
-    } else {
-        tId = prepareStreamsForNextFileToDecompress(tId, 0);
     }
     while (tId != NO_TARGET_TO_SCHEDULE && tId < lazyDecompressionTargetsGuard) {
         scheduleDependencyChain(tId);
@@ -1599,7 +1596,7 @@ template<bool lazyMode> void MBGC_Decoder<lazyMode>::scheduleParallelLazyDecompr
     for(int i = 0; i < scheduledTargetsCount; i++) {
         int tIdx = orderedTargets[i];
         int htmIdx = highestTargetMapping[tIdx];
-        if (tIdx > 0 && (htmIdx < 0 || revIdxOfST[tIdx] - revIdxOfST[htmIdx] > 1)) {
+        if (tIdx > 1 && (htmIdx < 0 || revIdxOfST[tIdx] - revIdxOfST[htmIdx] > 1)) {
             isTargetForParallelTaskThreadDecoding[tIdx] = true;
             targetsForParallelTaskThreadDecoding.emplace_back(tIdx);
         };

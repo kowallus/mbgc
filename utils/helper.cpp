@@ -560,7 +560,10 @@ int PgHelpers::strcmplcp(const char* lStrPtr, const char* rStrPtr, int length) {
     
     int i = 0;
     while (length - i >= 4) {
-        int cmp = bswap_32(*(uint32_t*) lStrPtr) - bswap_32(*(uint32_t*) rStrPtr);
+        uint32_t lVal, rVal;
+        memcpy(&lVal, lStrPtr, sizeof(uint32_t));
+        memcpy(&rVal, rStrPtr, sizeof(uint32_t));
+        int cmp = bswap_32(lVal) - bswap_32(rVal);
         if (cmp != 0)
             break;
         lStrPtr += 4;
